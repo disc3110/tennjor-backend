@@ -1,0 +1,30 @@
+services:
+  db:
+    image: postgres:16
+    container_name: zapateria_db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: zapateria_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  api:
+    build: .
+    container_name: shoe_store_api
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      # OJO: este DATABASE_URL es para dentro del contenedor,
+      # por eso host = db (el nombre del servicio)
+      DATABASE_URL: "postgresql://postgres:postgres@db:5432/zapateria_db?schema=public"
+      NODE_ENV: "production"
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:
