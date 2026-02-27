@@ -12,13 +12,77 @@ datasource db {
   provider = "postgresql"
 }
 
+enum UserRole {
+  ADMIN
+  USER
+}
+
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String
-  name         String
-  phone        String?
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      UserRole @default(USER)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Category {
+  id        String     @id @default(cuid())
+  name      String
+  slug      String     @unique
+  isActive  Boolean    @default(true)
+
+  products  Product[]
+
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model Product {
+  id          String          @id @default(cuid())
+  name        String
+  slug        String          @unique
+  description String?
+  isActive    Boolean         @default(true)
+
+  categoryId  String
+  category    Category        @relation(fields: [categoryId], references: [id])
+
+  images      ProductImage[]
+  variants    ProductVariant[]
+
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+}
+
+model ProductImage {
+  id         String   @id @default(cuid())
+  url        String   // URL de Cloudinary/S3
+  alt        String?
+  order      Int      @default(0)
+
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id])
+}
+
+model ProductVariant {
+  id         String   @id @default(cuid())
+  size       String   // Ej: "25", "26", "27" o "US 9"
+  color      String   // Ej: "Negro", "Blanco", "Rojo"
+  sku        String?  @unique
+  isActive   Boolean  @default(true)
+  stock      Int?     // opcional por ahora
+
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id])
+}
+
+model StoreConfig {
+  id                 Int      @id @default(1)
+  whatsappPhone      String
+  storeName          String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 }
