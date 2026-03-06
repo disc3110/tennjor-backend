@@ -1,13 +1,24 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Controller, Get, Param, Post, Body, Query } from '@nestjs/common';
 import { QuoteRequestsService } from './quote-requests.service';
 import { CreateQuoteRequestDto } from './dto/create-quote-request.dto';
+import { FindAdminQuoteRequestsDto } from './dto/find-admin-quote-requests.dto';
 
-@Controller('quote-requests')
+@Controller()
 export class QuoteRequestsController {
   constructor(private readonly quoteRequestsService: QuoteRequestsService) {}
 
-  @Post()
+  @Post('quote-requests')
   create(@Body() createQuoteRequestDto: CreateQuoteRequestDto) {
     return this.quoteRequestsService.create(createQuoteRequestDto);
+  }
+
+  @Get('admin/quote-requests')
+  findAllAdmin(@Query() query: FindAdminQuoteRequestsDto) {
+    return this.quoteRequestsService.findAllAdmin(query);
+  }
+
+  @Get('admin/quote-requests/:id')
+  findOneAdmin(@Param('id') id: string) {
+    return this.quoteRequestsService.findOneAdmin(id);
   }
 }
