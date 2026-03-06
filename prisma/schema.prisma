@@ -29,10 +29,12 @@ model User {
 }
 
 model Category {
-  id        String     @id @default(cuid())
-  name      String
-  slug      String     @unique
-  isActive  Boolean    @default(true)
+  id             String     @id @default(cuid())
+  name           String
+  slug           String     @unique
+  isActive       Boolean    @default(true)
+  imageWebUrl    String?    // imagen para pantallas web (desktop/tablet)
+  imageMobileUrl String?    // imagen para pantallas mobile
 
   products  Product[]
 
