@@ -7,10 +7,35 @@ export class CatalogService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getCategories(): Promise<Category[]> {
-    return await this.prisma.category.findMany({
-      where: { isActive: true },
-      orderBy: { name: 'asc' },
-    });
+    return await this.prisma.category
+      .findMany({
+        where: {
+          isActive: true,
+          products: {
+            some: {
+              isActive: true,
+            },
+          },
+        },
+        include: {
+          _count: {
+            select: {
+              products: {
+                where: {
+                  isActive: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { name: 'asc' },
+      })
+      .then((categories) =>
+        categories
+          .filter((category) => category._count.products >= 3)
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          .map(({ _count, ...category }) => category as Category),
+      );
   }
 
   async getProducts(params?: { categorySlug?: string }): Promise<Product[]> {

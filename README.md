@@ -21,7 +21,7 @@ docker compose up -d
 
 # Tennjor Backend (WhatsApp-First Shoe Store API)
 
-Backend API for a WhatsApp-first online shoe store.  
+Backend API for a WhatsApp-first online shoe store.
 Built with **NestJS**, **Prisma**, and **PostgreSQL**, fully dockerized for local development and future production deployment.
 
 ---
@@ -39,18 +39,20 @@ Built with **NestJS**, **Prisma**, and **PostgreSQL**, fully dockerized for loca
 ## 📦 Project Structure
 
 ```
+
 src/
-  app.module.ts
-  main.ts
-  prisma/
-    prisma.module.ts
-    prisma.service.ts
-  users/
-  (future)
-    auth/
-    catalog/
-    admin/
-```
+app.module.ts
+main.ts
+prisma/
+prisma.module.ts
+prisma.service.ts
+users/
+(future)
+auth/
+catalog/
+admin/
+
+````
 
 ---
 
@@ -85,7 +87,7 @@ This project includes:
 
 ```bash
 docker compose up -d --build
-```
+````
 
 This will:
 
