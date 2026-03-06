@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -17,74 +11,125 @@ enum UserRole {
   USER
 }
 
+enum QuoteRequestStatus {
+  NEW
+  CONTACTED
+  QUOTED
+  CLOSED
+  REJECTED
+}
+
+enum QuoteRequestSource {
+  WEB_FORM
+  WHATSAPP
+}
+
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  password  String
-  name      String
-  role      UserRole @default(USER)
+  id       String   @id @default(cuid())
+  email    String   @unique
+  password String
+  name     String
+  role     UserRole @default(USER)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model Category {
-  id             String     @id @default(cuid())
+  id             String  @id @default(cuid())
   name           String
-  slug           String     @unique
-  isActive       Boolean    @default(true)
-  imageWebUrl    String?    // imagen para pantallas web (desktop/tablet)
-  imageMobileUrl String?    // imagen para pantallas mobile
+  slug           String  @unique
+  isActive       Boolean @default(true)
+  imageWebUrl    String?
+  imageMobileUrl String?
 
-  products  Product[]
+  products Product[]
 
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Product {
-  id          String          @id @default(cuid())
+  id          String  @id @default(cuid())
   name        String
-  slug        String          @unique
+  slug        String  @unique
   description String?
-  isActive    Boolean         @default(true)
+  isActive    Boolean @default(true)
 
-  categoryId  String
-  category    Category        @relation(fields: [categoryId], references: [id])
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
 
-  images      ProductImage[]
-  variants    ProductVariant[]
+  images            ProductImage[]
+  variants          ProductVariant[]
+  quoteRequestItems QuoteRequestItem[]
 
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model ProductImage {
-  id         String   @id @default(cuid())
-  url        String   // URL de Cloudinary/S3
-  alt        String?
-  order      Int      @default(0)
+  id    String  @id @default(cuid())
+  url   String
+  alt   String?
+  order Int     @default(0)
 
-  productId  String
-  product    Product  @relation(fields: [productId], references: [id])
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 }
 
 model ProductVariant {
-  id         String   @id @default(cuid())
-  size       String   // Ej: "25", "26", "27" o "US 9"
-  color      String   // Ej: "Negro", "Blanco", "Rojo"
-  sku        String?  @unique
-  isActive   Boolean  @default(true)
-  stock      Int?     // opcional por ahora
+  id       String  @id @default(cuid())
+  size     String
+  color    String
+  sku      String? @unique
+  isActive Boolean @default(true)
+  stock    Int?
 
-  productId  String
-  product    Product  @relation(fields: [productId], references: [id])
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+}
+
+model QuoteRequest {
+  id            String             @id @default(cuid())
+  customerName  String
+  customerEmail String?
+  customerPhone String
+  customerCity  String?
+  notes         String?
+  status        QuoteRequestStatus @default(NEW)
+  source        QuoteRequestSource @default(WEB_FORM)
+
+  items QuoteRequestItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("quote_requests")
+}
+
+model QuoteRequestItem {
+  id                  String   @id @default(cuid())
+  quoteRequestId      String
+  productId           String
+  productNameSnapshot String
+  productSlugSnapshot String
+  size                String
+  color               String
+  quantity            Int      @default(1)
+  createdAt           DateTime @default(now())
+
+  quoteRequest QuoteRequest @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
+  product      Product      @relation(fields: [productId], references: [id])
+
+  @@index([quoteRequestId])
+  @@index([productId])
+  @@map("quote_request_items")
 }
 
 model StoreConfig {
-  id                 Int      @id @default(1)
-  whatsappPhone      String
-  storeName          String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id            Int      @id @default(1)
+  whatsappPhone String
+  storeName     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
