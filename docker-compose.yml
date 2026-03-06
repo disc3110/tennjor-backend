@@ -18,11 +18,11 @@ services:
     restart: always
     ports:
       - '3000:3000'
+    env_file:
+      - .env
     environment:
-      # OJO: este DATABASE_URL es para dentro del contenedor,
-      # por eso host = db (el nombre del servicio)
-      DATABASE_URL: 'postgresql://postgres:postgres@db:5432/zapateria_db?schema=public'
-      NODE_ENV: 'production'
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/zapateria_db?schema=public
+      NODE_ENV: development
     depends_on:
       - db
 

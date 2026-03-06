@@ -3,15 +3,18 @@ FROM node:20-alpine AS builder
 
 WORKDIR /usr/src/app
 
-# Copiar package.json y lockfile primero (para aprovechar cache)
+# Prisma on alpine usually needs openssl
+RUN apk add --no-cache openssl
+
+# Copiar package files primero
 COPY package*.json ./
 
 RUN npm install
 
-# Copiar el resto del código
+# Copiar el resto del proyecto
 COPY . .
 
-# Generar cliente de Prisma y compilar Nest
+# Generar Prisma client y compilar Nest
 RUN npx prisma generate
 RUN npm run build
 
@@ -20,16 +23,17 @@ FROM node:20-alpine AS runner
 
 WORKDIR /usr/src/app
 
+RUN apk add --no-cache openssl
+
 ENV NODE_ENV=production
 
-# Copiamos solo lo necesario desde la imagen builder
+# Copiamos lo necesario
 COPY --from=builder /usr/src/app/node_modules ./node_modules
 COPY --from=builder /usr/src/app/dist ./dist
 COPY --from=builder /usr/src/app/prisma ./prisma
-COPY package*.json ./
+COPY --from=builder /usr/src/app/package*.json ./
+COPY --from=builder /usr/src/app/prisma.config.ts ./prisma.config.ts
 
-# Puerto donde corre Nest (por defecto 3000)
 EXPOSE 3000
 
-# Comando de inicio
 CMD ["npm", "run", "start:prod"]
