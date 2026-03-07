@@ -6,10 +6,12 @@ import {
   Body,
   Query,
   UseGuards,
+  Patch,
 } from '@nestjs/common';
 import { QuoteRequestsService } from './quote-requests.service';
 import { CreateQuoteRequestDto } from './dto/create-quote-request.dto';
 import { FindAdminQuoteRequestsDto } from './dto/find-admin-quote-requests.dto';
+import { UpdateQuoteRequestStatusDto } from './dto/update-quote-request-status.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller()
@@ -31,5 +33,17 @@ export class QuoteRequestsController {
   @Get('admin/quote-requests/:id')
   findOneAdmin(@Param('id') id: string) {
     return this.quoteRequestsService.findOneAdmin(id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('admin/quote-requests/:id/status')
+  updateStatus(
+    @Param('id') id: string,
+    @Body() updateQuoteRequestStatusDto: UpdateQuoteRequestStatusDto,
+  ) {
+    return this.quoteRequestsService.updateStatus(
+      id,
+      updateQuoteRequestStatusDto,
+    );
   }
 }
