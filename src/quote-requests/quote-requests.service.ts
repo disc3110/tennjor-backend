@@ -6,6 +6,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { CreateQuoteRequestDto } from './dto/create-quote-request.dto';
 import { FindAdminQuoteRequestsDto } from './dto/find-admin-quote-requests.dto';
+import { UpdateQuoteRequestStatusDto } from './dto/update-quote-request-status.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
@@ -117,7 +118,18 @@ export class QuoteRequestsService {
         },
         skip,
         take: limit,
-        include: {
+        select: {
+          id: true,
+          customerName: true,
+          customerEmail: true,
+          customerPhone: true,
+          customerCity: true,
+          notes: true,
+          internalNotes: true,
+          status: true,
+          source: true,
+          createdAt: true,
+          updatedAt: true,
           items: {
             select: {
               id: true,
@@ -148,7 +160,18 @@ export class QuoteRequestsService {
   async findOneAdmin(id: string) {
     const quoteRequest = await this.prisma.quoteRequest.findUnique({
       where: { id },
-      include: {
+      select: {
+        id: true,
+        customerName: true,
+        customerEmail: true,
+        customerPhone: true,
+        customerCity: true,
+        notes: true,
+        internalNotes: true,
+        status: true,
+        source: true,
+        createdAt: true,
+        updatedAt: true,
         items: {
           select: {
             id: true,
@@ -170,6 +193,70 @@ export class QuoteRequestsService {
 
     return {
       data: quoteRequest,
+    };
+  }
+
+  async updateStatus(
+    id: string,
+    updateQuoteRequestStatusDto: UpdateQuoteRequestStatusDto,
+  ) {
+    const existingQuoteRequest = await this.prisma.quoteRequest.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        internalNotes: true,
+      },
+    });
+
+    if (!existingQuoteRequest) {
+      throw new NotFoundException('Quote request not found.');
+    }
+
+    const updatedQuoteRequest = await this.prisma.quoteRequest.update({
+      where: { id },
+      data: {
+        status: updateQuoteRequestStatusDto.status,
+        ...(updateQuoteRequestStatusDto.internalNotes
+          ? {
+              internalNotes: {
+                set: [
+                  ...(existingQuoteRequest.internalNotes ?? []),
+                  updateQuoteRequestStatusDto.internalNotes,
+                ],
+              },
+            }
+          : {}),
+      },
+      select: {
+        id: true,
+        customerName: true,
+        customerEmail: true,
+        customerPhone: true,
+        customerCity: true,
+        notes: true,
+        internalNotes: true,
+        status: true,
+        source: true,
+        createdAt: true,
+        updatedAt: true,
+        items: {
+          select: {
+            id: true,
+            productId: true,
+            productNameSnapshot: true,
+            productSlugSnapshot: true,
+            size: true,
+            color: true,
+            quantity: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    return {
+      message: 'Quote request updated successfully.',
+      data: updatedQuoteRequest,
     };
   }
 }

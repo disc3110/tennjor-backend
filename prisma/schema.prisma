@@ -70,6 +70,7 @@ model QuoteRequest {
   customerPhone String
   customerCity  String?
   notes         String?
+  internalNotes String[]           @default([])
   status        QuoteRequestStatus @default(NEW)
   source        QuoteRequestSource @default(WEB_FORM)
   createdAt     DateTime           @default(now())
