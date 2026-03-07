@@ -7,6 +7,7 @@ import { UsersModule } from './users/users.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { QuoteRequestsModule } from './quote-requests/quote-requests.module';
 import { AuthModule } from './auth/auth.module';
+import { AdminDashboardModule } from './admin-dashboard/admin-dashboard.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { AuthModule } from './auth/auth.module';
     CatalogModule,
     QuoteRequestsModule,
     AuthModule,
+    AdminDashboardModule,
   ],
   controllers: [AppController],
   providers: [AppService],
