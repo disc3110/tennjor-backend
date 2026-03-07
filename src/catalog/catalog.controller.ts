@@ -5,11 +5,13 @@ import {
   Query,
   Body,
   Post,
+  Patch,
   UseGuards,
 } from '@nestjs/common';
 import { CatalogService } from './catalog.service';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { CreateAdminProductDto } from './dto/create-admin-product.dto';
+import { UpdateAdminProductDto } from './dto/update-admin-product.dto';
 
 @Controller()
 export class CatalogController {
@@ -36,5 +38,14 @@ export class CatalogController {
   @Post('admin/products')
   createAdminProduct(@Body() createAdminProductDto: CreateAdminProductDto) {
     return this.catalogService.createAdminProduct(createAdminProductDto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('admin/products/:id')
+  updateAdminProduct(
+    @Param('id') id: string,
+    @Body() updateAdminProductDto: UpdateAdminProductDto,
+  ) {
+    return this.catalogService.updateAdminProduct(id, updateAdminProductDto);
   }
 }

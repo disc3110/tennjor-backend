@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { Category, Product } from '@prisma/client';
 import { CreateAdminProductDto } from './dto/create-admin-product.dto';
+import { UpdateAdminProductDto } from './dto/update-admin-product.dto';
 
 @Injectable()
 export class CatalogService {
@@ -175,6 +176,109 @@ export class CatalogService {
     return {
       message: 'Product created successfully.',
       data: createdProduct,
+    };
+  }
+
+  async updateAdminProduct(
+    id: string,
+    updateAdminProductDto: UpdateAdminProductDto,
+  ) {
+    const existingProduct = await this.prisma.product.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        slug: true,
+        categoryId: true,
+      },
+    });
+
+    if (!existingProduct) {
+      throw new NotFoundException('Product not found.');
+    }
+
+    if (updateAdminProductDto.categoryId) {
+      const existingCategory = await this.prisma.category.findUnique({
+        where: { id: updateAdminProductDto.categoryId },
+        select: { id: true },
+      });
+
+      if (!existingCategory) {
+        throw new BadRequestException('Category not found.');
+      }
+    }
+
+    if (
+      updateAdminProductDto.slug &&
+      updateAdminProductDto.slug !== existingProduct.slug
+    ) {
+      const productWithSameSlug = await this.prisma.product.findUnique({
+        where: { slug: updateAdminProductDto.slug },
+        select: { id: true },
+      });
+
+      if (productWithSameSlug) {
+        throw new BadRequestException('Product slug already exists.');
+      }
+    }
+
+    const updatedProduct = await this.prisma.product.update({
+      where: { id },
+      data: {
+        ...(updateAdminProductDto.name !== undefined
+          ? { name: updateAdminProductDto.name }
+          : {}),
+        ...(updateAdminProductDto.slug !== undefined
+          ? { slug: updateAdminProductDto.slug }
+          : {}),
+        ...(updateAdminProductDto.description !== undefined
+          ? { description: updateAdminProductDto.description }
+          : {}),
+        ...(updateAdminProductDto.isActive !== undefined
+          ? { isActive: updateAdminProductDto.isActive }
+          : {}),
+        ...(updateAdminProductDto.categoryId !== undefined
+          ? { categoryId: updateAdminProductDto.categoryId }
+          : {}),
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+        category: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+        images: {
+          select: {
+            id: true,
+            url: true,
+            alt: true,
+            order: true,
+          },
+        },
+        variants: {
+          select: {
+            id: true,
+            size: true,
+            color: true,
+            sku: true,
+            isActive: true,
+            stock: true,
+          },
+        },
+      },
+    });
+
+    return {
+      message: 'Product updated successfully.',
+      data: updatedProduct,
     };
   }
 }
