@@ -12,6 +12,8 @@ import { CatalogService } from './catalog.service';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 import { CreateAdminProductDto } from './dto/create-admin-product.dto';
 import { UpdateAdminProductDto } from './dto/update-admin-product.dto';
+import { CreateAdminProductVariantDto } from './dto/create-admin-product-variant.dto';
+import { UpdateAdminProductVariantDto } from './dto/update-admin-product-variant.dto';
 
 @Controller()
 export class CatalogController {
@@ -47,5 +49,29 @@ export class CatalogController {
     @Body() updateAdminProductDto: UpdateAdminProductDto,
   ) {
     return this.catalogService.updateAdminProduct(id, updateAdminProductDto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('admin/products/:productId/variants')
+  createAdminProductVariant(
+    @Param('productId') productId: string,
+    @Body() createAdminProductVariantDto: CreateAdminProductVariantDto,
+  ) {
+    return this.catalogService.createAdminProductVariant(
+      productId,
+      createAdminProductVariantDto,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('admin/variants/:id')
+  updateAdminProductVariant(
+    @Param('id') id: string,
+    @Body() updateAdminProductVariantDto: UpdateAdminProductVariantDto,
+  ) {
+    return this.catalogService.updateAdminProductVariant(
+      id,
+      updateAdminProductVariantDto,
+    );
   }
 }

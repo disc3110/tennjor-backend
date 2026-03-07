@@ -7,6 +7,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Category, Product } from '@prisma/client';
 import { CreateAdminProductDto } from './dto/create-admin-product.dto';
 import { UpdateAdminProductDto } from './dto/update-admin-product.dto';
+import { CreateAdminProductVariantDto } from './dto/create-admin-product-variant.dto';
+import { UpdateAdminProductVariantDto } from './dto/update-admin-product-variant.dto';
 
 @Injectable()
 export class CatalogService {
@@ -279,6 +281,123 @@ export class CatalogService {
     return {
       message: 'Product updated successfully.',
       data: updatedProduct,
+    };
+  }
+
+  async createAdminProductVariant(
+    productId: string,
+    createAdminProductVariantDto: CreateAdminProductVariantDto,
+  ) {
+    const existingProduct = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true },
+    });
+
+    if (!existingProduct) {
+      throw new NotFoundException('Product not found.');
+    }
+
+    if (createAdminProductVariantDto.sku) {
+      const existingSku = await this.prisma.productVariant.findUnique({
+        where: { sku: createAdminProductVariantDto.sku },
+        select: { id: true },
+      });
+
+      if (existingSku) {
+        throw new BadRequestException('Variant SKU already exists.');
+      }
+    }
+
+    const createdVariant = await this.prisma.productVariant.create({
+      data: {
+        productId,
+        size: createAdminProductVariantDto.size,
+        color: createAdminProductVariantDto.color,
+        sku: createAdminProductVariantDto.sku,
+        isActive: createAdminProductVariantDto.isActive ?? true,
+        stock: createAdminProductVariantDto.stock,
+      },
+      select: {
+        id: true,
+        size: true,
+        color: true,
+        sku: true,
+        isActive: true,
+        stock: true,
+        productId: true,
+      },
+    });
+
+    return {
+      message: 'Product variant created successfully.',
+      data: createdVariant,
+    };
+  }
+
+  async updateAdminProductVariant(
+    id: string,
+    updateAdminProductVariantDto: UpdateAdminProductVariantDto,
+  ) {
+    const existingVariant = await this.prisma.productVariant.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        sku: true,
+        productId: true,
+      },
+    });
+
+    if (!existingVariant) {
+      throw new NotFoundException('Product variant not found.');
+    }
+
+    if (
+      updateAdminProductVariantDto.sku &&
+      updateAdminProductVariantDto.sku !== existingVariant.sku
+    ) {
+      const variantWithSameSku = await this.prisma.productVariant.findUnique({
+        where: { sku: updateAdminProductVariantDto.sku },
+        select: { id: true },
+      });
+
+      if (variantWithSameSku) {
+        throw new BadRequestException('Variant SKU already exists.');
+      }
+    }
+
+    const updatedVariant = await this.prisma.productVariant.update({
+      where: { id },
+      data: {
+        ...(updateAdminProductVariantDto.size !== undefined
+          ? { size: updateAdminProductVariantDto.size }
+          : {}),
+        ...(updateAdminProductVariantDto.color !== undefined
+          ? { color: updateAdminProductVariantDto.color }
+          : {}),
+        ...(updateAdminProductVariantDto.sku !== undefined
+          ? { sku: updateAdminProductVariantDto.sku }
+          : {}),
+        ...(updateAdminProductVariantDto.isActive !== undefined
+          ? { isActive: updateAdminProductVariantDto.isActive }
+          : {}),
+        ...(updateAdminProductVariantDto.stock !== undefined
+          ? { stock: updateAdminProductVariantDto.stock }
+          : {}),
+      },
+      select: {
+        id: true,
+        size: true,
+        color: true,
+        sku: true,
+        isActive: true,
+        stock: true,
+        productId: true,
+      },
+    });
+
+    return {
+      message: 'Product variant updated successfully.',
+      data: updatedVariant,
     };
   }
 }
