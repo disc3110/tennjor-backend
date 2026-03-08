@@ -16,6 +16,7 @@ The backend is responsible for:
 - Storing quote requests
 - Providing authentication for admin users
 - Managing product images
+- Exporting admin data to CSV (products, categories, dashboard stats + quote requests)
 
 The backend exposes a **REST API** that is consumed by a **Next.js frontend application**.
 
@@ -56,6 +57,12 @@ Each module typically contains:
 - service
 - DTOs
 - validation logic
+
+Shared utilities should live under common paths when cross-domain reuse is needed.
+Example in current codebase:
+
+- `src/common/utils/csv.util.ts` for CSV serialization
+- `src/auth/guards/admin-role.guard.ts` for ADMIN-only protection
 
 ### Design Rules
 
@@ -146,6 +153,23 @@ Responsibilities:
 - manage categories
 - upload product images
 - activate or deactivate products
+- export products/categories/dashboard data as CSV files
+
+CSV export routes currently available:
+
+- `GET /admin/products/export/csv`
+- `GET /admin/categories/export/csv`
+- `GET /admin/dashboard/stats/export/csv`
+
+Notes:
+
+- CSV export endpoints return `text/csv` with `Content-Disposition: attachment`.
+- Dashboard CSV includes multiple sections in one file:
+  - summary
+  - quotesByStatus
+  - topRequestedProducts
+  - quoteRequests
+- CSV export endpoints are protected with JWT + explicit ADMIN role guard (`AdminRoleGuard`).
 
 ---
 
@@ -217,6 +241,7 @@ The frontend calls this API to:
 - fetch products
 - fetch product details
 - send quote requests
+- download CSV exports for admin reporting
 
 The frontend communicates with the backend using REST endpoints exposed by NestJS controllers.
 
@@ -244,24 +269,17 @@ All REST endpoints should follow consistent API conventions.
 
 ### Response Structure
 
-Successful responses should follow a predictable JSON format:
+Current API response style is **mixed by endpoint**:
 
-```
-{
-  "success": true,
-  "data": {}
-}
-```
+- Many admin/public JSON endpoints return either:
+  - `{ data: ... }`
+  - `{ message: string, data: ... }`
+  - raw arrays/objects for some public routes
+- CSV export endpoints return raw CSV string responses with:
+  - `Content-Type: text/csv; charset=utf-8`
+  - download filename in `Content-Disposition`
 
-Errors should follow a consistent structure:
-
-```
-{
-  "success": false,
-  "message": "Error description",
-  "errors": []
-}
-```
+When adding new endpoints, keep response shape explicit and consistent within each domain module.
 
 ### Validation
 
