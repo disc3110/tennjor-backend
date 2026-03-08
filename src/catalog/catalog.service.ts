@@ -1,6 +1,16 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Category, Product } from '@prisma/client';
+import { CreateAdminProductDto } from './dto/create-admin-product.dto';
+import { UpdateAdminProductDto } from './dto/update-admin-product.dto';
+import { CreateAdminProductVariantDto } from './dto/create-admin-product-variant.dto';
+import { UpdateAdminProductVariantDto } from './dto/update-admin-product-variant.dto';
+import { CreateAdminProductImageDto } from './dto/create-admin-product-image.dto';
+import { UpdateAdminProductImageDto } from './dto/update-admin-product-image.dto';
 
 @Injectable()
 export class CatalogService {
@@ -82,5 +92,429 @@ export class CatalogService {
     }
 
     return product;
+  }
+
+  async createAdminProduct(createAdminProductDto: CreateAdminProductDto) {
+    const existingCategory = await this.prisma.category.findUnique({
+      where: { id: createAdminProductDto.categoryId },
+      select: { id: true, isActive: true },
+    });
+
+    if (!existingCategory) {
+      throw new BadRequestException('Category not found.');
+    }
+
+    const existingSlug = await this.prisma.product.findUnique({
+      where: { slug: createAdminProductDto.slug },
+      select: { id: true },
+    });
+
+    if (existingSlug) {
+      throw new BadRequestException('Product slug already exists.');
+    }
+
+    const createdProduct = await this.prisma.product.create({
+      data: {
+        name: createAdminProductDto.name,
+        slug: createAdminProductDto.slug,
+        description: createAdminProductDto.description,
+        isActive: createAdminProductDto.isActive ?? true,
+        categoryId: createAdminProductDto.categoryId,
+        images: createAdminProductDto.images?.length
+          ? {
+              create: createAdminProductDto.images.map((image) => ({
+                url: image.url,
+                alt: image.alt,
+                order: image.order ?? 0,
+              })),
+            }
+          : undefined,
+        variants: createAdminProductDto.variants?.length
+          ? {
+              create: createAdminProductDto.variants.map((variant) => ({
+                size: variant.size,
+                color: variant.color,
+                sku: variant.sku,
+                isActive: variant.isActive ?? true,
+                stock: variant.stock,
+              })),
+            }
+          : undefined,
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+        category: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+        images: {
+          select: {
+            id: true,
+            url: true,
+            alt: true,
+            order: true,
+          },
+        },
+        variants: {
+          select: {
+            id: true,
+            size: true,
+            color: true,
+            sku: true,
+            isActive: true,
+            stock: true,
+          },
+        },
+      },
+    });
+
+    return {
+      message: 'Product created successfully.',
+      data: createdProduct,
+    };
+  }
+
+  async updateAdminProduct(
+    id: string,
+    updateAdminProductDto: UpdateAdminProductDto,
+  ) {
+    const existingProduct = await this.prisma.product.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        slug: true,
+        categoryId: true,
+      },
+    });
+
+    if (!existingProduct) {
+      throw new NotFoundException('Product not found.');
+    }
+
+    if (updateAdminProductDto.categoryId) {
+      const existingCategory = await this.prisma.category.findUnique({
+        where: { id: updateAdminProductDto.categoryId },
+        select: { id: true },
+      });
+
+      if (!existingCategory) {
+        throw new BadRequestException('Category not found.');
+      }
+    }
+
+    if (
+      updateAdminProductDto.slug &&
+      updateAdminProductDto.slug !== existingProduct.slug
+    ) {
+      const productWithSameSlug = await this.prisma.product.findUnique({
+        where: { slug: updateAdminProductDto.slug },
+        select: { id: true },
+      });
+
+      if (productWithSameSlug) {
+        throw new BadRequestException('Product slug already exists.');
+      }
+    }
+
+    const updatedProduct = await this.prisma.product.update({
+      where: { id },
+      data: {
+        ...(updateAdminProductDto.name !== undefined
+          ? { name: updateAdminProductDto.name }
+          : {}),
+        ...(updateAdminProductDto.slug !== undefined
+          ? { slug: updateAdminProductDto.slug }
+          : {}),
+        ...(updateAdminProductDto.description !== undefined
+          ? { description: updateAdminProductDto.description }
+          : {}),
+        ...(updateAdminProductDto.isActive !== undefined
+          ? { isActive: updateAdminProductDto.isActive }
+          : {}),
+        ...(updateAdminProductDto.categoryId !== undefined
+          ? { categoryId: updateAdminProductDto.categoryId }
+          : {}),
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+        category: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+        images: {
+          select: {
+            id: true,
+            url: true,
+            alt: true,
+            order: true,
+          },
+        },
+        variants: {
+          select: {
+            id: true,
+            size: true,
+            color: true,
+            sku: true,
+            isActive: true,
+            stock: true,
+          },
+        },
+      },
+    });
+
+    return {
+      message: 'Product updated successfully.',
+      data: updatedProduct,
+    };
+  }
+
+  async createAdminProductVariant(
+    productId: string,
+    createAdminProductVariantDto: CreateAdminProductVariantDto,
+  ) {
+    const existingProduct = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true },
+    });
+
+    if (!existingProduct) {
+      throw new NotFoundException('Product not found.');
+    }
+
+    if (createAdminProductVariantDto.sku) {
+      const existingSku = await this.prisma.productVariant.findUnique({
+        where: { sku: createAdminProductVariantDto.sku },
+        select: { id: true },
+      });
+
+      if (existingSku) {
+        throw new BadRequestException('Variant SKU already exists.');
+      }
+    }
+
+    const createdVariant = await this.prisma.productVariant.create({
+      data: {
+        productId,
+        size: createAdminProductVariantDto.size,
+        color: createAdminProductVariantDto.color,
+        sku: createAdminProductVariantDto.sku,
+        isActive: createAdminProductVariantDto.isActive ?? true,
+        stock: createAdminProductVariantDto.stock,
+      },
+      select: {
+        id: true,
+        size: true,
+        color: true,
+        sku: true,
+        isActive: true,
+        stock: true,
+        productId: true,
+      },
+    });
+
+    return {
+      message: 'Product variant created successfully.',
+      data: createdVariant,
+    };
+  }
+
+  async updateAdminProductVariant(
+    id: string,
+    updateAdminProductVariantDto: UpdateAdminProductVariantDto,
+  ) {
+    const existingVariant = await this.prisma.productVariant.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        sku: true,
+        productId: true,
+      },
+    });
+
+    if (!existingVariant) {
+      throw new NotFoundException('Product variant not found.');
+    }
+
+    if (
+      updateAdminProductVariantDto.sku &&
+      updateAdminProductVariantDto.sku !== existingVariant.sku
+    ) {
+      const variantWithSameSku = await this.prisma.productVariant.findUnique({
+        where: { sku: updateAdminProductVariantDto.sku },
+        select: { id: true },
+      });
+
+      if (variantWithSameSku) {
+        throw new BadRequestException('Variant SKU already exists.');
+      }
+    }
+
+    const updatedVariant = await this.prisma.productVariant.update({
+      where: { id },
+      data: {
+        ...(updateAdminProductVariantDto.size !== undefined
+          ? { size: updateAdminProductVariantDto.size }
+          : {}),
+        ...(updateAdminProductVariantDto.color !== undefined
+          ? { color: updateAdminProductVariantDto.color }
+          : {}),
+        ...(updateAdminProductVariantDto.sku !== undefined
+          ? { sku: updateAdminProductVariantDto.sku }
+          : {}),
+        ...(updateAdminProductVariantDto.isActive !== undefined
+          ? { isActive: updateAdminProductVariantDto.isActive }
+          : {}),
+        ...(updateAdminProductVariantDto.stock !== undefined
+          ? { stock: updateAdminProductVariantDto.stock }
+          : {}),
+      },
+      select: {
+        id: true,
+        size: true,
+        color: true,
+        sku: true,
+        isActive: true,
+        stock: true,
+        productId: true,
+      },
+    });
+
+    return {
+      message: 'Product variant updated successfully.',
+      data: updatedVariant,
+    };
+  }
+
+  async createAdminProductImage(
+    productId: string,
+    createAdminProductImageDto: CreateAdminProductImageDto,
+  ) {
+    const existingProduct = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true },
+    });
+
+    if (!existingProduct) {
+      throw new NotFoundException('Product not found.');
+    }
+
+    const createdImage = await this.prisma.productImage.create({
+      data: {
+        productId,
+        url: createAdminProductImageDto.url,
+        secureUrl: createAdminProductImageDto.secureUrl,
+        publicId: createAdminProductImageDto.publicId,
+        alt: createAdminProductImageDto.alt,
+        order: createAdminProductImageDto.order ?? 0,
+      },
+      select: {
+        id: true,
+        url: true,
+        secureUrl: true,
+        publicId: true,
+        alt: true,
+        order: true,
+        productId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return {
+      message: 'Product image created successfully.',
+      data: createdImage,
+    };
+  }
+
+  async updateAdminProductImage(
+    id: string,
+    updateAdminProductImageDto: UpdateAdminProductImageDto,
+  ) {
+    const existingImage = await this.prisma.productImage.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!existingImage) {
+      throw new NotFoundException('Product image not found.');
+    }
+
+    const updatedImage = await this.prisma.productImage.update({
+      where: { id },
+      data: {
+        ...(updateAdminProductImageDto.url !== undefined
+          ? { url: updateAdminProductImageDto.url }
+          : {}),
+        ...(updateAdminProductImageDto.secureUrl !== undefined
+          ? { secureUrl: updateAdminProductImageDto.secureUrl }
+          : {}),
+        ...(updateAdminProductImageDto.publicId !== undefined
+          ? { publicId: updateAdminProductImageDto.publicId }
+          : {}),
+        ...(updateAdminProductImageDto.alt !== undefined
+          ? { alt: updateAdminProductImageDto.alt }
+          : {}),
+        ...(updateAdminProductImageDto.order !== undefined
+          ? { order: updateAdminProductImageDto.order }
+          : {}),
+      },
+      select: {
+        id: true,
+        url: true,
+        secureUrl: true,
+        publicId: true,
+        alt: true,
+        order: true,
+        productId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return {
+      message: 'Product image updated successfully.',
+      data: updatedImage,
+    };
+  }
+
+  async deleteAdminProductImage(id: string) {
+    const existingImage = await this.prisma.productImage.findUnique({
+      where: { id },
+      select: { id: true, publicId: true },
+    });
+
+    if (!existingImage) {
+      throw new NotFoundException('Product image not found.');
+    }
+
+    await this.prisma.productImage.delete({
+      where: { id },
+    });
+
+    return {
+      message: 'Product image deleted successfully.',
+      data: {
+        id: existingImage.id,
+        publicId: existingImage.publicId,
+      },
+    };
   }
 }
