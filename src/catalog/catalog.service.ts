@@ -16,10 +16,64 @@ import { FindAdminCategoriesDto } from './dto/find-admin-categories.dto';
 import { CreateAdminCategoryDto } from './dto/create-admin-category.dto';
 import { UpdateAdminCategoryDto } from './dto/update-admin-category.dto';
 import { Prisma } from '@prisma/client';
+import { buildCsv } from 'src/common/utils/csv.util';
 
 @Injectable()
 export class CatalogService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private buildAdminProductsWhere(
+    query: FindAdminProductsDto,
+  ): Prisma.ProductWhereInput {
+    return {
+      ...(query.search
+        ? {
+            OR: [
+              {
+                name: {
+                  contains: query.search,
+                  mode: 'insensitive',
+                },
+              },
+              {
+                slug: {
+                  contains: query.search,
+                  mode: 'insensitive',
+                },
+              },
+            ],
+          }
+        : {}),
+      ...(query.categoryId ? { categoryId: query.categoryId } : {}),
+      ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
+    };
+  }
+
+  private buildAdminCategoriesWhere(
+    query: FindAdminCategoriesDto,
+  ): Prisma.CategoryWhereInput {
+    return {
+      ...(query.search
+        ? {
+            OR: [
+              {
+                name: {
+                  contains: query.search,
+                  mode: 'insensitive',
+                },
+              },
+              {
+                slug: {
+                  contains: query.search,
+                  mode: 'insensitive',
+                },
+              },
+            ],
+          }
+        : {}),
+      ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
+    };
+  }
 
   async getCategories(): Promise<Category[]> {
     return await this.prisma.category
@@ -528,28 +582,7 @@ export class CatalogService {
     const limit = query.limit ?? 10;
     const skip = (page - 1) * limit;
 
-    const where: Prisma.ProductWhereInput = {
-      ...(query.search
-        ? {
-            OR: [
-              {
-                name: {
-                  contains: query.search,
-                  mode: 'insensitive',
-                },
-              },
-              {
-                slug: {
-                  contains: query.search,
-                  mode: 'insensitive',
-                },
-              },
-            ],
-          }
-        : {}),
-      ...(query.categoryId ? { categoryId: query.categoryId } : {}),
-      ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
-    };
+    const where = this.buildAdminProductsWhere(query);
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.product.findMany({
@@ -616,6 +649,75 @@ export class CatalogService {
     };
   }
 
+  async exportAdminProductsCsv(query: FindAdminProductsDto) {
+    const where = this.buildAdminProductsWhere(query);
+
+    const products = await this.prisma.product.findMany({
+      where,
+      orderBy: {
+        createdAt: 'desc',
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        isActive: true,
+        category: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+        createdAt: true,
+        updatedAt: true,
+        _count: {
+          select: {
+            images: true,
+            variants: true,
+          },
+        },
+        variants: {
+          select: {
+            stock: true,
+          },
+        },
+      },
+    });
+
+    const headers = [
+      'id',
+      'name',
+      'slug',
+      'description',
+      'isActive',
+      'categoryId',
+      'categoryName',
+      'imagesCount',
+      'variantsCount',
+      'totalStock',
+      'createdAt',
+      'updatedAt',
+    ];
+
+    const rows = products.map((product) => [
+      product.id,
+      product.name,
+      product.slug,
+      product.description ?? '',
+      product.isActive,
+      product.category.id,
+      product.category.name,
+      product._count.images,
+      product._count.variants,
+      product.variants.reduce((sum, variant) => sum + (variant.stock ?? 0), 0),
+      product.createdAt,
+      product.updatedAt,
+    ]);
+
+    return buildCsv(headers, rows);
+  }
+
   async findOneAdminProduct(id: string) {
     const product = await this.prisma.product.findUnique({
       where: { id },
@@ -675,27 +777,7 @@ export class CatalogService {
   }
 
   async findAllAdminCategories(query: FindAdminCategoriesDto) {
-    const where: Prisma.CategoryWhereInput = {
-      ...(query.search
-        ? {
-            OR: [
-              {
-                name: {
-                  contains: query.search,
-                  mode: 'insensitive',
-                },
-              },
-              {
-                slug: {
-                  contains: query.search,
-                  mode: 'insensitive',
-                },
-              },
-            ],
-          }
-        : {}),
-      ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
-    };
+    const where = this.buildAdminCategoriesWhere(query);
 
     const categories = await this.prisma.category.findMany({
       where,
@@ -722,6 +804,58 @@ export class CatalogService {
     return {
       data: categories,
     };
+  }
+
+  async exportAdminCategoriesCsv(query: FindAdminCategoriesDto) {
+    const where = this.buildAdminCategoriesWhere(query);
+
+    const categories = await this.prisma.category.findMany({
+      where,
+      orderBy: {
+        name: 'asc',
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        isActive: true,
+        imageWebUrl: true,
+        imageMobileUrl: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: {
+          select: {
+            products: true,
+          },
+        },
+      },
+    });
+
+    const headers = [
+      'id',
+      'name',
+      'slug',
+      'isActive',
+      'imageWebUrl',
+      'imageMobileUrl',
+      'productsCount',
+      'createdAt',
+      'updatedAt',
+    ];
+
+    const rows = categories.map((category) => [
+      category.id,
+      category.name,
+      category.slug,
+      category.isActive,
+      category.imageWebUrl ?? '',
+      category.imageMobileUrl ?? '',
+      category._count.products,
+      category.createdAt,
+      category.updatedAt,
+    ]);
+
+    return buildCsv(headers, rows);
   }
 
   async findOneAdminCategory(id: string) {

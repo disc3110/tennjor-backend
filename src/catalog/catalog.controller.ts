@@ -8,6 +8,7 @@ import {
   Patch,
   UseGuards,
   Delete,
+  Res,
 } from '@nestjs/common';
 import { CatalogService } from './catalog.service';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
@@ -21,6 +22,8 @@ import { FindAdminProductsDto } from './dto/find-admin-products.dto';
 import { FindAdminCategoriesDto } from './dto/find-admin-categories.dto';
 import { CreateAdminCategoryDto } from './dto/create-admin-category.dto';
 import { UpdateAdminCategoryDto } from './dto/update-admin-category.dto';
+import { AdminRoleGuard } from 'src/auth/guards/admin-role.guard';
+import type { Response } from 'express';
 
 @Controller()
 export class CatalogController {
@@ -118,6 +121,18 @@ export class CatalogController {
     return this.catalogService.findAllAdminProducts(query);
   }
 
+  @UseGuards(JwtAuthGuard, AdminRoleGuard)
+  @Get('admin/products/export/csv')
+  async exportAdminProductsCsv(
+    @Query() query: FindAdminProductsDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const csv = await this.catalogService.exportAdminProductsCsv(query);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="products.csv"');
+    return csv;
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get('admin/products/:id')
   findOneAdminProduct(@Param('id') id: string) {
@@ -128,6 +143,21 @@ export class CatalogController {
   @Get('admin/categories')
   findAllAdminCategories(@Query() query: FindAdminCategoriesDto) {
     return this.catalogService.findAllAdminCategories(query);
+  }
+
+  @UseGuards(JwtAuthGuard, AdminRoleGuard)
+  @Get('admin/categories/export/csv')
+  async exportAdminCategoriesCsv(
+    @Query() query: FindAdminCategoriesDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const csv = await this.catalogService.exportAdminCategoriesCsv(query);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="categories.csv"',
+    );
+    return csv;
   }
 
   @UseGuards(JwtAuthGuard)
