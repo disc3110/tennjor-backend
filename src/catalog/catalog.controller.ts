@@ -18,6 +18,7 @@ import { CreateAdminProductVariantDto } from './dto/create-admin-product-variant
 import { UpdateAdminProductVariantDto } from './dto/update-admin-product-variant.dto';
 import { CreateAdminProductImageDto } from './dto/create-admin-product-image.dto';
 import { UpdateAdminProductImageDto } from './dto/update-admin-product-image.dto';
+import { CreateAdminBulkProductVariantsDto } from './dto/create-admin-bulk-product-variants.dto';
 import { FindAdminProductsDto } from './dto/find-admin-products.dto';
 import { FindAdminCategoriesDto } from './dto/find-admin-categories.dto';
 import { CreateAdminCategoryDto } from './dto/create-admin-category.dto';
@@ -62,6 +63,12 @@ export class CatalogController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Delete('admin/products/:id')
+  deleteAdminProduct(@Param('id') id: string) {
+    return this.catalogService.deleteAdminProduct(id);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Post('admin/products/:productId/variants')
   createAdminProductVariant(
     @Param('productId') productId: string,
@@ -70,6 +77,18 @@ export class CatalogController {
     return this.catalogService.createAdminProductVariant(
       productId,
       createAdminProductVariantDto,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('admin/products/:productId/variants/bulk')
+  createAdminBulkProductVariants(
+    @Param('productId') productId: string,
+    @Body() createAdminBulkProductVariantsDto: CreateAdminBulkProductVariantsDto,
+  ) {
+    return this.catalogService.createAdminBulkProductVariants(
+      productId,
+      createAdminBulkProductVariantsDto,
     );
   }
 
@@ -83,6 +102,12 @@ export class CatalogController {
       id,
       updateAdminProductVariantDto,
     );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('admin/variants/:id')
+  deleteAdminProductVariant(@Param('id') id: string) {
+    return this.catalogService.deleteAdminProductVariant(id);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -179,5 +204,11 @@ export class CatalogController {
     @Body() updateAdminCategoryDto: UpdateAdminCategoryDto,
   ) {
     return this.catalogService.updateAdminCategory(id, updateAdminCategoryDto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('admin/categories/:id')
+  deleteAdminCategory(@Param('id') id: string) {
+    return this.catalogService.deleteAdminCategory(id);
   }
 }
