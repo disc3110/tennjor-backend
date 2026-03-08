@@ -12,16 +12,26 @@ import { UpdateAdminProductVariantDto } from './dto/update-admin-product-variant
 import { CreateAdminProductImageDto } from './dto/create-admin-product-image.dto';
 import { UpdateAdminProductImageDto } from './dto/update-admin-product-image.dto';
 import { CreateAdminBulkProductVariantsDto } from './dto/create-admin-bulk-product-variants.dto';
+import { UploadAdminProductImageDto } from './dto/upload-admin-product-image.dto';
 import { FindAdminProductsDto } from './dto/find-admin-products.dto';
 import { FindAdminCategoriesDto } from './dto/find-admin-categories.dto';
 import { CreateAdminCategoryDto } from './dto/create-admin-category.dto';
 import { UpdateAdminCategoryDto } from './dto/update-admin-category.dto';
 import { Prisma } from '@prisma/client';
 import { buildCsv } from 'src/common/utils/csv.util';
+import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
+
+type UploadedImageFile = {
+  buffer: Buffer;
+  originalname: string;
+};
 
 @Injectable()
 export class CatalogService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cloudinaryService: CloudinaryService,
+  ) {}
 
   private buildAdminProductsWhere(
     query: FindAdminProductsDto,
@@ -696,6 +706,63 @@ export class CatalogService {
     };
   }
 
+  async uploadAdminProductImage(
+    productId: string,
+    file: UploadedImageFile,
+    uploadAdminProductImageDto: UploadAdminProductImageDto,
+  ) {
+    const existingProduct = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: {
+        id: true,
+        slug: true,
+      },
+    });
+
+    if (!existingProduct) {
+      throw new NotFoundException('Product not found.');
+    }
+
+    const productSlugFolderSegment = existingProduct.slug.replace(
+      /[^a-zA-Z0-9_-]/g,
+      '-',
+    );
+    const folder = `${this.cloudinaryService.getFolderRoot()}/products/${productSlugFolderSegment}`;
+
+    const uploadedAsset = await this.cloudinaryService.uploadImage({
+      fileBuffer: file.buffer,
+      filename: file.originalname,
+      folder,
+    });
+
+    const createdImage = await this.prisma.productImage.create({
+      data: {
+        productId,
+        url: uploadedAsset.url,
+        secureUrl: uploadedAsset.secureUrl,
+        publicId: uploadedAsset.publicId,
+        alt: uploadAdminProductImageDto.alt,
+        order: uploadAdminProductImageDto.order ?? 0,
+      },
+      select: {
+        id: true,
+        url: true,
+        secureUrl: true,
+        publicId: true,
+        alt: true,
+        order: true,
+        productId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return {
+      message: 'Product image uploaded successfully.',
+      data: createdImage,
+    };
+  }
+
   async updateAdminProductImage(
     id: string,
     updateAdminProductImageDto: UpdateAdminProductImageDto,
@@ -757,6 +824,35 @@ export class CatalogService {
       throw new NotFoundException('Product image not found.');
     }
 
+    let cloudinaryCleanup:
+      | {
+          attempted: boolean;
+          result?: string;
+          error?: string;
+        }
+      | undefined;
+
+    if (existingImage.publicId) {
+      try {
+        const destroyResult = await this.cloudinaryService.destroyImage(
+          existingImage.publicId,
+        );
+        cloudinaryCleanup = {
+          attempted: true,
+          result: destroyResult.result,
+        };
+      } catch (error) {
+        cloudinaryCleanup = {
+          attempted: true,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        };
+      }
+    } else {
+      cloudinaryCleanup = {
+        attempted: false,
+      };
+    }
+
     await this.prisma.productImage.delete({
       where: { id },
     });
@@ -766,6 +862,7 @@ export class CatalogService {
       data: {
         id: existingImage.id,
         publicId: existingImage.publicId,
+        cloudinaryCleanup,
       },
     };
   }
@@ -1114,6 +1211,7 @@ export class CatalogService {
     };
   }
 
+  // TODO(cloudinary-category): add backend-managed upload endpoints for category imageWebUrl/imageMobileUrl.
   async createAdminCategory(createAdminCategoryDto: CreateAdminCategoryDto) {
     const existingCategory = await this.prisma.category.findUnique({
       where: { slug: createAdminCategoryDto.slug },

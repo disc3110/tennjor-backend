@@ -9,6 +9,10 @@ import {
   UseGuards,
   Delete,
   Res,
+  HttpStatus,
+  ParseFilePipeBuilder,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
 import { CatalogService } from './catalog.service';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
@@ -19,12 +23,19 @@ import { UpdateAdminProductVariantDto } from './dto/update-admin-product-variant
 import { CreateAdminProductImageDto } from './dto/create-admin-product-image.dto';
 import { UpdateAdminProductImageDto } from './dto/update-admin-product-image.dto';
 import { CreateAdminBulkProductVariantsDto } from './dto/create-admin-bulk-product-variants.dto';
+import { UploadAdminProductImageDto } from './dto/upload-admin-product-image.dto';
 import { FindAdminProductsDto } from './dto/find-admin-products.dto';
 import { FindAdminCategoriesDto } from './dto/find-admin-categories.dto';
 import { CreateAdminCategoryDto } from './dto/create-admin-category.dto';
 import { UpdateAdminCategoryDto } from './dto/update-admin-category.dto';
 import { AdminRoleGuard } from 'src/auth/guards/admin-role.guard';
 import type { Response } from 'express';
+import { FileInterceptor } from '@nestjs/platform-express';
+
+type UploadedImageFile = {
+  buffer: Buffer;
+  originalname: string;
+};
 
 @Controller()
 export class CatalogController {
@@ -119,6 +130,30 @@ export class CatalogController {
     return this.catalogService.createAdminProductImage(
       productId,
       createAdminProductImageDto,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('admin/products/:productId/images/upload')
+  @UseInterceptors(FileInterceptor('file'))
+  uploadAdminProductImage(
+    @Param('productId') productId: string,
+    @UploadedFile(
+      new ParseFilePipeBuilder()
+        .addFileTypeValidator({ fileType: /^image\/(jpeg|jpg|png|webp|gif|avif)$/ })
+        .addMaxSizeValidator({ maxSize: 8 * 1024 * 1024 })
+        .build({
+          errorHttpStatusCode: HttpStatus.BAD_REQUEST,
+          fileIsRequired: true,
+        }),
+    )
+    file: UploadedImageFile,
+    @Body() uploadAdminProductImageDto: UploadAdminProductImageDto,
+  ) {
+    return this.catalogService.uploadAdminProductImage(
+      productId,
+      file,
+      uploadAdminProductImageDto,
     );
   }
 

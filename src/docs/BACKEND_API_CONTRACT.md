@@ -22,13 +22,25 @@ Data store is PostgreSQL via Prisma.
 
 - Base URL: `http://localhost:3000` by default in local dev (from `main.ts` listening on `process.env.PORT ?? 3000`).
 - No global prefix (routes are mounted exactly as defined in controllers).
-- Content type: `application/json`.
+- Content type: `application/json` for most endpoints.
+- Multipart uploads: `multipart/form-data` for file upload endpoints.
 - Authenticated endpoints require:
   - `Authorization: Bearer <accessToken>`
 
 CORS:
 
 - CORS is enabled with `origin: true` and `credentials: true`.
+
+## Media Configuration (Cloudinary)
+
+Backend-managed media endpoints rely on Cloudinary server-side configuration:
+
+- `CLOUDINARY_CLOUD_NAME` (required)
+- `CLOUDINARY_API_KEY` (required)
+- `CLOUDINARY_API_SECRET` (required)
+- `CLOUDINARY_FOLDER_ROOT` (optional, default: `tennjor`)
+
+If required vars are missing, backend startup fails with a clear configuration error.
 
 ## Authentication
 
@@ -97,6 +109,7 @@ Common validation constraints used:
 | PATCH  | `/admin/variants/:id`                 | Yes           | No (JWT only) | Update product variant                        |
 | DELETE | `/admin/variants/:id`                 | Yes           | No (JWT only) | Delete product variant                        |
 | POST   | `/admin/products/:productId/images`   | Yes           | No (JWT only) | Create product image                          |
+| POST   | `/admin/products/:productId/images/upload` | Yes      | No (JWT only) | Upload product image file via backend Cloudinary |
 | PATCH  | `/admin/product-images/:id`           | Yes           | No (JWT only) | Update product image                          |
 | DELETE | `/admin/product-images/:id`           | Yes           | No (JWT only) | Delete product image                          |
 | GET    | `/admin/categories`                   | Yes           | No (JWT only) | Admin category list                           |
@@ -1044,6 +1057,60 @@ curl -X POST http://localhost:3000/admin/products/prod_1/images \
 }
 ```
 
+### POST `/admin/products/:productId/images/upload`
+
+- Purpose: Upload a product image file through backend-managed Cloudinary integration and persist the resulting `ProductImage` row.
+- Auth requirements: JWT required.
+- Params: `productId`.
+- Query: None.
+- Request body:
+  - `multipart/form-data`
+  - required file field: `file` (image only)
+  - optional fields:
+    - `alt?: string`
+    - `order?: number` (int >= 0)
+- Behavior:
+  - Validates product existence.
+  - Validates file type (`jpeg/jpg/png/webp/gif/avif`) and max file size (8MB).
+  - Uploads to Cloudinary folder pattern:
+    - `<CLOUDINARY_FOLDER_ROOT>/products/<product-slug>/`
+  - Stores `url`, `secureUrl`, `publicId`, `alt`, `order` in `ProductImage`.
+- Response body:
+  - `{ message: "Product image uploaded successfully.", data: ProductImage }`
+- Error cases:
+  - `401` auth
+  - `404` product not found
+  - `400` invalid file/type/size or invalid metadata fields
+  - `500` Cloudinary upload failure
+- Example request:
+
+```bash
+curl -X POST http://localhost:3000/admin/products/prod_1/images/upload \
+  -H 'Authorization: Bearer <token>' \
+  -F 'file=@/tmp/alpha-front.jpg' \
+  -F 'alt=Front view' \
+  -F 'order=0'
+```
+
+- Example response:
+
+```json
+{
+  "message": "Product image uploaded successfully.",
+  "data": {
+    "id": "img_3",
+    "url": "http://res.cloudinary.com/demo/image/upload/v1/tennjor/products/tenis-alpha/alpha-front.jpg",
+    "secureUrl": "https://res.cloudinary.com/demo/image/upload/v1/tennjor/products/tenis-alpha/alpha-front.jpg",
+    "publicId": "tennjor/products/tenis-alpha/alpha-front",
+    "alt": "Front view",
+    "order": 0,
+    "productId": "prod_1",
+    "createdAt": "...",
+    "updatedAt": "..."
+  }
+}
+```
+
 ### PATCH `/admin/product-images/:id`
 
 - Purpose: Update image fields/order.
@@ -1094,10 +1161,16 @@ curl -X PATCH http://localhost:3000/admin/product-images/img_2 \
 - Query: None.
 - Request body: None.
 - Response body:
-  - `{ message: "Product image deleted successfully.", data: { id, publicId } }`
+  - `{ message: "Product image deleted successfully.", data: { id, publicId, cloudinaryCleanup } }`
 - Error cases:
   - `401` auth
   - `404` image not found
+- Notes:
+  - If `publicId` exists, backend attempts Cloudinary asset deletion before DB delete.
+  - `cloudinaryCleanup` reports the attempt status/result:
+    - `{ attempted: false }` (no publicId)
+    - `{ attempted: true, result: "ok" | "not found" }`
+    - `{ attempted: true, error: "<message>" }` (cleanup failure while DB delete still proceeds)
 - Example request:
 
 ```bash
@@ -1112,7 +1185,11 @@ curl -X DELETE http://localhost:3000/admin/product-images/img_2 \
   "message": "Product image deleted successfully.",
   "data": {
     "id": "img_2",
-    "publicId": null
+    "publicId": "tennjor/products/tenis-alpha/front",
+    "cloudinaryCleanup": {
+      "attempted": true,
+      "result": "ok"
+    }
   }
 }
 ```
