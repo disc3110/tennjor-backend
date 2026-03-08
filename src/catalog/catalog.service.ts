@@ -11,6 +11,11 @@ import { CreateAdminProductVariantDto } from './dto/create-admin-product-variant
 import { UpdateAdminProductVariantDto } from './dto/update-admin-product-variant.dto';
 import { CreateAdminProductImageDto } from './dto/create-admin-product-image.dto';
 import { UpdateAdminProductImageDto } from './dto/update-admin-product-image.dto';
+import { FindAdminProductsDto } from './dto/find-admin-products.dto';
+import { FindAdminCategoriesDto } from './dto/find-admin-categories.dto';
+import { CreateAdminCategoryDto } from './dto/create-admin-category.dto';
+import { UpdateAdminCategoryDto } from './dto/update-admin-category.dto';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class CatalogService {
@@ -515,6 +520,383 @@ export class CatalogService {
         id: existingImage.id,
         publicId: existingImage.publicId,
       },
+    };
+  }
+
+  async findAllAdminProducts(query: FindAdminProductsDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.ProductWhereInput = {
+      ...(query.search
+        ? {
+            OR: [
+              {
+                name: {
+                  contains: query.search,
+                  mode: 'insensitive',
+                },
+              },
+              {
+                slug: {
+                  contains: query.search,
+                  mode: 'insensitive',
+                },
+              },
+            ],
+          }
+        : {}),
+      ...(query.categoryId ? { categoryId: query.categoryId } : {}),
+      ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
+    };
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.product.findMany({
+        where,
+        orderBy: {
+          createdAt: 'desc',
+        },
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          description: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+          category: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+            },
+          },
+          images: {
+            orderBy: {
+              order: 'asc',
+            },
+            select: {
+              id: true,
+              url: true,
+              secureUrl: true,
+              publicId: true,
+              alt: true,
+              order: true,
+            },
+          },
+          variants: {
+            orderBy: {
+              size: 'asc',
+            },
+            select: {
+              id: true,
+              size: true,
+              color: true,
+              sku: true,
+              isActive: true,
+              stock: true,
+            },
+          },
+        },
+      }),
+      this.prisma.product.count({ where }),
+    ]);
+
+    return {
+      data: items,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async findOneAdminProduct(id: string) {
+    const product = await this.prisma.product.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+        category: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+        images: {
+          orderBy: {
+            order: 'asc',
+          },
+          select: {
+            id: true,
+            url: true,
+            secureUrl: true,
+            publicId: true,
+            alt: true,
+            order: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
+        variants: {
+          orderBy: {
+            size: 'asc',
+          },
+          select: {
+            id: true,
+            size: true,
+            color: true,
+            sku: true,
+            isActive: true,
+            stock: true,
+          },
+        },
+      },
+    });
+
+    if (!product) {
+      throw new NotFoundException('Product not found.');
+    }
+
+    return {
+      data: product,
+    };
+  }
+
+  async findAllAdminCategories(query: FindAdminCategoriesDto) {
+    const where: Prisma.CategoryWhereInput = {
+      ...(query.search
+        ? {
+            OR: [
+              {
+                name: {
+                  contains: query.search,
+                  mode: 'insensitive',
+                },
+              },
+              {
+                slug: {
+                  contains: query.search,
+                  mode: 'insensitive',
+                },
+              },
+            ],
+          }
+        : {}),
+      ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
+    };
+
+    const categories = await this.prisma.category.findMany({
+      where,
+      orderBy: {
+        name: 'asc',
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        isActive: true,
+        imageWebUrl: true,
+        imageMobileUrl: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: {
+          select: {
+            products: true,
+          },
+        },
+      },
+    });
+
+    return {
+      data: categories,
+    };
+  }
+
+  async findOneAdminCategory(id: string) {
+    const category = await this.prisma.category.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        isActive: true,
+        imageWebUrl: true,
+        imageMobileUrl: true,
+        createdAt: true,
+        updatedAt: true,
+        products: {
+          orderBy: {
+            createdAt: 'desc',
+          },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            isActive: true,
+            createdAt: true,
+            images: {
+              orderBy: {
+                order: 'asc',
+              },
+              take: 1,
+              select: {
+                id: true,
+                url: true,
+                secureUrl: true,
+                alt: true,
+                order: true,
+              },
+            },
+            variants: {
+              select: {
+                id: true,
+                size: true,
+                color: true,
+                stock: true,
+                isActive: true,
+              },
+            },
+          },
+        },
+        _count: {
+          select: {
+            products: true,
+          },
+        },
+      },
+    });
+
+    if (!category) {
+      throw new NotFoundException('Category not found.');
+    }
+
+    return {
+      data: category,
+    };
+  }
+
+  async createAdminCategory(createAdminCategoryDto: CreateAdminCategoryDto) {
+    const existingCategory = await this.prisma.category.findUnique({
+      where: { slug: createAdminCategoryDto.slug },
+      select: { id: true },
+    });
+
+    if (existingCategory) {
+      throw new BadRequestException('Category slug already exists.');
+    }
+
+    const createdCategory = await this.prisma.category.create({
+      data: {
+        name: createAdminCategoryDto.name,
+        slug: createAdminCategoryDto.slug,
+        isActive: createAdminCategoryDto.isActive ?? true,
+        imageWebUrl: createAdminCategoryDto.imageWebUrl,
+        imageMobileUrl: createAdminCategoryDto.imageMobileUrl,
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        isActive: true,
+        imageWebUrl: true,
+        imageMobileUrl: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: {
+          select: {
+            products: true,
+          },
+        },
+      },
+    });
+
+    return {
+      message: 'Category created successfully.',
+      data: createdCategory,
+    };
+  }
+
+  async updateAdminCategory(
+    id: string,
+    updateAdminCategoryDto: UpdateAdminCategoryDto,
+  ) {
+    const existingCategory = await this.prisma.category.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        slug: true,
+      },
+    });
+
+    if (!existingCategory) {
+      throw new NotFoundException('Category not found.');
+    }
+
+    if (
+      updateAdminCategoryDto.slug &&
+      updateAdminCategoryDto.slug !== existingCategory.slug
+    ) {
+      const categoryWithSameSlug = await this.prisma.category.findUnique({
+        where: { slug: updateAdminCategoryDto.slug },
+        select: { id: true },
+      });
+
+      if (categoryWithSameSlug) {
+        throw new BadRequestException('Category slug already exists.');
+      }
+    }
+
+    const updatedCategory = await this.prisma.category.update({
+      where: { id },
+      data: {
+        ...(updateAdminCategoryDto.name !== undefined
+          ? { name: updateAdminCategoryDto.name }
+          : {}),
+        ...(updateAdminCategoryDto.slug !== undefined
+          ? { slug: updateAdminCategoryDto.slug }
+          : {}),
+        ...(updateAdminCategoryDto.isActive !== undefined
+          ? { isActive: updateAdminCategoryDto.isActive }
+          : {}),
+        ...(updateAdminCategoryDto.imageWebUrl !== undefined
+          ? { imageWebUrl: updateAdminCategoryDto.imageWebUrl }
+          : {}),
+        ...(updateAdminCategoryDto.imageMobileUrl !== undefined
+          ? { imageMobileUrl: updateAdminCategoryDto.imageMobileUrl }
+          : {}),
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        isActive: true,
+        imageWebUrl: true,
+        imageMobileUrl: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: {
+          select: {
+            products: true,
+          },
+        },
+      },
+    });
+
+    return {
+      message: 'Category updated successfully.',
+      data: updatedCategory,
     };
   }
 }

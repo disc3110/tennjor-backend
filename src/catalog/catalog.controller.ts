@@ -17,6 +17,10 @@ import { CreateAdminProductVariantDto } from './dto/create-admin-product-variant
 import { UpdateAdminProductVariantDto } from './dto/update-admin-product-variant.dto';
 import { CreateAdminProductImageDto } from './dto/create-admin-product-image.dto';
 import { UpdateAdminProductImageDto } from './dto/update-admin-product-image.dto';
+import { FindAdminProductsDto } from './dto/find-admin-products.dto';
+import { FindAdminCategoriesDto } from './dto/find-admin-categories.dto';
+import { CreateAdminCategoryDto } from './dto/create-admin-category.dto';
+import { UpdateAdminCategoryDto } from './dto/update-admin-category.dto';
 
 @Controller()
 export class CatalogController {
@@ -106,5 +110,44 @@ export class CatalogController {
   @Delete('admin/product-images/:id')
   deleteAdminProductImage(@Param('id') id: string) {
     return this.catalogService.deleteAdminProductImage(id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('admin/products')
+  findAllAdminProducts(@Query() query: FindAdminProductsDto) {
+    return this.catalogService.findAllAdminProducts(query);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('admin/products/:id')
+  findOneAdminProduct(@Param('id') id: string) {
+    return this.catalogService.findOneAdminProduct(id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('admin/categories')
+  findAllAdminCategories(@Query() query: FindAdminCategoriesDto) {
+    return this.catalogService.findAllAdminCategories(query);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('admin/categories/:id')
+  findOneAdminCategory(@Param('id') id: string) {
+    return this.catalogService.findOneAdminCategory(id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('admin/categories')
+  createAdminCategory(@Body() createAdminCategoryDto: CreateAdminCategoryDto) {
+    return this.catalogService.createAdminCategory(createAdminCategoryDto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('admin/categories/:id')
+  updateAdminCategory(
+    @Param('id') id: string,
+    @Body() updateAdminCategoryDto: UpdateAdminCategoryDto,
+  ) {
+    return this.catalogService.updateAdminCategory(id, updateAdminCategoryDto);
   }
 }
