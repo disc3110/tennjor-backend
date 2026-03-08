@@ -11,6 +11,7 @@ import { CreateAdminProductVariantDto } from './dto/create-admin-product-variant
 import { UpdateAdminProductVariantDto } from './dto/update-admin-product-variant.dto';
 import { CreateAdminProductImageDto } from './dto/create-admin-product-image.dto';
 import { UpdateAdminProductImageDto } from './dto/update-admin-product-image.dto';
+import { CreateAdminBulkProductVariantsDto } from './dto/create-admin-bulk-product-variants.dto';
 import { FindAdminProductsDto } from './dto/find-admin-products.dto';
 import { FindAdminCategoriesDto } from './dto/find-admin-categories.dto';
 import { CreateAdminCategoryDto } from './dto/create-admin-category.dto';
@@ -73,6 +74,51 @@ export class CatalogService {
         : {}),
       ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
     };
+  }
+
+  private formatVariantSize(size: number): string {
+    return Number.isInteger(size) ? `${size}` : size.toFixed(1);
+  }
+
+  private generateVariantSizes(
+    startSize: number,
+    endSize: number,
+    includeHalfSizes: boolean,
+  ): string[] {
+    if (startSize > endSize) {
+      throw new BadRequestException(
+        'Invalid range: startSize must be less than or equal to endSize.',
+      );
+    }
+
+    const isHalfStepValue = (value: number) => Number.isInteger(value * 2);
+
+    if (!isHalfStepValue(startSize) || !isHalfStepValue(endSize)) {
+      throw new BadRequestException(
+        'Sizes must use whole or half-size steps (for example: 22, 22.5, 23).',
+      );
+    }
+
+    if (
+      !includeHalfSizes &&
+      (!Number.isInteger(startSize) || !Number.isInteger(endSize))
+    ) {
+      throw new BadRequestException(
+        'When includeHalfSizes is false, startSize and endSize must be whole numbers.',
+      );
+    }
+
+    const start = Math.round(startSize * 2);
+    const end = Math.round(endSize * 2);
+    const stepInHalves = includeHalfSizes ? 1 : 2;
+    const generatedSizes: string[] = [];
+
+    for (let current = start; current <= end; current += stepInHalves) {
+      const value = current / 2;
+      generatedSizes.push(this.formatVariantSize(value));
+    }
+
+    return generatedSizes;
   }
 
   async getCategories(): Promise<Category[]> {
@@ -345,6 +391,61 @@ export class CatalogService {
     };
   }
 
+  async deleteAdminProduct(id: string) {
+    const existingProduct = await this.prisma.product.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        images: {
+          select: {
+            publicId: true,
+          },
+        },
+      },
+    });
+
+    if (!existingProduct) {
+      throw new NotFoundException('Product not found.');
+    }
+
+    const quoteReferences = await this.prisma.quoteRequestItem.count({
+      where: { productId: id },
+    });
+
+    if (quoteReferences > 0) {
+      throw new BadRequestException(
+        'Cannot delete product referenced by quote requests.',
+      );
+    }
+
+    const cloudinaryPublicIds = existingProduct.images
+      .map((image) => image.publicId)
+      .filter((publicId): publicId is string => Boolean(publicId));
+
+    await this.prisma.$transaction([
+      this.prisma.productVariant.deleteMany({
+        where: { productId: id },
+      }),
+      this.prisma.productImage.deleteMany({
+        where: { productId: id },
+      }),
+      this.prisma.product.delete({
+        where: { id },
+      }),
+    ]);
+
+    // TODO(cloudinary): enqueue Cloudinary asset deletion using collected public IDs.
+    return {
+      message: 'Product deleted successfully.',
+      data: {
+        id,
+        deletedVariants: true,
+        deletedImages: true,
+        cloudinaryCleanupPendingPublicIds: cloudinaryPublicIds,
+      },
+    };
+  }
+
   async createAdminProductVariant(
     productId: string,
     createAdminProductVariantDto: CreateAdminProductVariantDto,
@@ -392,6 +493,76 @@ export class CatalogService {
     return {
       message: 'Product variant created successfully.',
       data: createdVariant,
+    };
+  }
+
+  async createAdminBulkProductVariants(
+    productId: string,
+    createAdminBulkProductVariantsDto: CreateAdminBulkProductVariantsDto,
+  ) {
+    const existingProduct = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true },
+    });
+
+    if (!existingProduct) {
+      throw new NotFoundException('Product not found.');
+    }
+
+    const sizesToCreate = this.generateVariantSizes(
+      createAdminBulkProductVariantsDto.startSize,
+      createAdminBulkProductVariantsDto.endSize,
+      createAdminBulkProductVariantsDto.includeHalfSizes,
+    );
+
+    const existingVariants = await this.prisma.productVariant.findMany({
+      where: {
+        productId,
+        color: createAdminBulkProductVariantsDto.color,
+        size: { in: sizesToCreate },
+      },
+      select: {
+        size: true,
+      },
+    });
+
+    const existingSizeSet = new Set(existingVariants.map((variant) => variant.size));
+    const skippedSizes = sizesToCreate.filter((size) => existingSizeSet.has(size));
+    const newSizes = sizesToCreate.filter((size) => !existingSizeSet.has(size));
+
+    const createdVariants = await this.prisma.$transaction(
+      newSizes.map((size) =>
+        this.prisma.productVariant.create({
+          data: {
+            productId,
+            size,
+            color: createAdminBulkProductVariantsDto.color,
+            isActive: createAdminBulkProductVariantsDto.isActive ?? true,
+            stock: createAdminBulkProductVariantsDto.stock,
+          },
+          select: {
+            id: true,
+            size: true,
+            color: true,
+            sku: true,
+            isActive: true,
+            stock: true,
+            productId: true,
+          },
+        }),
+      ),
+    );
+
+    return {
+      message: 'Product variants bulk creation completed successfully.',
+      data: {
+        productId,
+        requestedCount: sizesToCreate.length,
+        createdCount: createdVariants.length,
+        skippedCount: skippedSizes.length,
+        skippedSizes,
+        variants: createdVariants,
+      },
     };
   }
 
@@ -459,6 +630,28 @@ export class CatalogService {
     return {
       message: 'Product variant updated successfully.',
       data: updatedVariant,
+    };
+  }
+
+  async deleteAdminProductVariant(id: string) {
+    const existingVariant = await this.prisma.productVariant.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!existingVariant) {
+      throw new NotFoundException('Product variant not found.');
+    }
+
+    await this.prisma.productVariant.delete({
+      where: { id },
+    });
+
+    return {
+      message: 'Product variant deleted successfully.',
+      data: {
+        id: existingVariant.id,
+      },
     };
   }
 
@@ -1031,6 +1224,77 @@ export class CatalogService {
     return {
       message: 'Category updated successfully.',
       data: updatedCategory,
+    };
+  }
+
+  async deleteAdminCategory(id: string) {
+    const existingCategory = await this.prisma.category.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        products: {
+          select: {
+            id: true,
+            images: {
+              select: {
+                publicId: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!existingCategory) {
+      throw new NotFoundException('Category not found.');
+    }
+
+    const productIds = existingCategory.products.map((product) => product.id);
+    const cloudinaryPublicIds = existingCategory.products.flatMap((product) =>
+      product.images
+        .map((image) => image.publicId)
+        .filter((publicId): publicId is string => Boolean(publicId)),
+    );
+
+    if (productIds.length > 0) {
+      const quoteReferences = await this.prisma.quoteRequestItem.count({
+        where: {
+          productId: { in: productIds },
+        },
+      });
+
+      if (quoteReferences > 0) {
+        throw new BadRequestException(
+          'Cannot delete category because one or more products are referenced by quote requests.',
+        );
+      }
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.productVariant.deleteMany({
+        where: { productId: { in: productIds } },
+      }),
+      this.prisma.productImage.deleteMany({
+        where: { productId: { in: productIds } },
+      }),
+      this.prisma.product.deleteMany({
+        where: { categoryId: id },
+      }),
+      this.prisma.category.delete({
+        where: { id },
+      }),
+    ]);
+
+    // TODO(cloudinary): enqueue Cloudinary asset deletion using collected public IDs.
+    return {
+      message: 'Category deleted successfully.',
+      data: {
+        id,
+        deletedProductsCount: productIds.length,
+        deletedVariants: true,
+        deletedImages: true,
+        cloudinaryCleanupPendingPublicIds: cloudinaryPublicIds,
+      },
     };
   }
 }
