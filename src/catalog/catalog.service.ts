@@ -12,6 +12,7 @@ import { UpdateAdminProductVariantDto } from './dto/update-admin-product-variant
 import { CreateAdminProductImageDto } from './dto/create-admin-product-image.dto';
 import { UpdateAdminProductImageDto } from './dto/update-admin-product-image.dto';
 import { FindAdminProductsDto } from './dto/find-admin-products.dto';
+import { FindAdminCategoriesDto } from './dto/find-admin-categories.dto';
 import { Prisma } from '@prisma/client';
 
 @Injectable()
@@ -668,6 +669,119 @@ export class CatalogService {
 
     return {
       data: product,
+    };
+  }
+
+  async findAllAdminCategories(query: FindAdminCategoriesDto) {
+    const where: Prisma.CategoryWhereInput = {
+      ...(query.search
+        ? {
+            OR: [
+              {
+                name: {
+                  contains: query.search,
+                  mode: 'insensitive',
+                },
+              },
+              {
+                slug: {
+                  contains: query.search,
+                  mode: 'insensitive',
+                },
+              },
+            ],
+          }
+        : {}),
+      ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
+    };
+
+    const categories = await this.prisma.category.findMany({
+      where,
+      orderBy: {
+        name: 'asc',
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        isActive: true,
+        imageWebUrl: true,
+        imageMobileUrl: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: {
+          select: {
+            products: true,
+          },
+        },
+      },
+    });
+
+    return {
+      data: categories,
+    };
+  }
+
+  async findOneAdminCategory(id: string) {
+    const category = await this.prisma.category.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        isActive: true,
+        imageWebUrl: true,
+        imageMobileUrl: true,
+        createdAt: true,
+        updatedAt: true,
+        products: {
+          orderBy: {
+            createdAt: 'desc',
+          },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            isActive: true,
+            createdAt: true,
+            images: {
+              orderBy: {
+                order: 'asc',
+              },
+              take: 1,
+              select: {
+                id: true,
+                url: true,
+                secureUrl: true,
+                alt: true,
+                order: true,
+              },
+            },
+            variants: {
+              select: {
+                id: true,
+                size: true,
+                color: true,
+                stock: true,
+                isActive: true,
+              },
+            },
+          },
+        },
+        _count: {
+          select: {
+            products: true,
+          },
+        },
+      },
+    });
+
+    if (!category) {
+      throw new NotFoundException('Category not found.');
+    }
+
+    return {
+      data: category,
     };
   }
 }
