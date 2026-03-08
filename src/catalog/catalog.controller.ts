@@ -19,6 +19,8 @@ import { CreateAdminProductImageDto } from './dto/create-admin-product-image.dto
 import { UpdateAdminProductImageDto } from './dto/update-admin-product-image.dto';
 import { FindAdminProductsDto } from './dto/find-admin-products.dto';
 import { FindAdminCategoriesDto } from './dto/find-admin-categories.dto';
+import { CreateAdminCategoryDto } from './dto/create-admin-category.dto';
+import { UpdateAdminCategoryDto } from './dto/update-admin-category.dto';
 
 @Controller()
 export class CatalogController {
@@ -132,5 +134,20 @@ export class CatalogController {
   @Get('admin/categories/:id')
   findOneAdminCategory(@Param('id') id: string) {
     return this.catalogService.findOneAdminCategory(id);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('admin/categories')
+  createAdminCategory(@Body() createAdminCategoryDto: CreateAdminCategoryDto) {
+    return this.catalogService.createAdminCategory(createAdminCategoryDto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('admin/categories/:id')
+  updateAdminCategory(
+    @Param('id') id: string,
+    @Body() updateAdminCategoryDto: UpdateAdminCategoryDto,
+  ) {
+    return this.catalogService.updateAdminCategory(id, updateAdminCategoryDto);
   }
 }

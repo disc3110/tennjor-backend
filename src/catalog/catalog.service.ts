@@ -13,6 +13,8 @@ import { CreateAdminProductImageDto } from './dto/create-admin-product-image.dto
 import { UpdateAdminProductImageDto } from './dto/update-admin-product-image.dto';
 import { FindAdminProductsDto } from './dto/find-admin-products.dto';
 import { FindAdminCategoriesDto } from './dto/find-admin-categories.dto';
+import { CreateAdminCategoryDto } from './dto/create-admin-category.dto';
+import { UpdateAdminCategoryDto } from './dto/update-admin-category.dto';
 import { Prisma } from '@prisma/client';
 
 @Injectable()
@@ -782,6 +784,119 @@ export class CatalogService {
 
     return {
       data: category,
+    };
+  }
+
+  async createAdminCategory(createAdminCategoryDto: CreateAdminCategoryDto) {
+    const existingCategory = await this.prisma.category.findUnique({
+      where: { slug: createAdminCategoryDto.slug },
+      select: { id: true },
+    });
+
+    if (existingCategory) {
+      throw new BadRequestException('Category slug already exists.');
+    }
+
+    const createdCategory = await this.prisma.category.create({
+      data: {
+        name: createAdminCategoryDto.name,
+        slug: createAdminCategoryDto.slug,
+        isActive: createAdminCategoryDto.isActive ?? true,
+        imageWebUrl: createAdminCategoryDto.imageWebUrl,
+        imageMobileUrl: createAdminCategoryDto.imageMobileUrl,
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        isActive: true,
+        imageWebUrl: true,
+        imageMobileUrl: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: {
+          select: {
+            products: true,
+          },
+        },
+      },
+    });
+
+    return {
+      message: 'Category created successfully.',
+      data: createdCategory,
+    };
+  }
+
+  async updateAdminCategory(
+    id: string,
+    updateAdminCategoryDto: UpdateAdminCategoryDto,
+  ) {
+    const existingCategory = await this.prisma.category.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        slug: true,
+      },
+    });
+
+    if (!existingCategory) {
+      throw new NotFoundException('Category not found.');
+    }
+
+    if (
+      updateAdminCategoryDto.slug &&
+      updateAdminCategoryDto.slug !== existingCategory.slug
+    ) {
+      const categoryWithSameSlug = await this.prisma.category.findUnique({
+        where: { slug: updateAdminCategoryDto.slug },
+        select: { id: true },
+      });
+
+      if (categoryWithSameSlug) {
+        throw new BadRequestException('Category slug already exists.');
+      }
+    }
+
+    const updatedCategory = await this.prisma.category.update({
+      where: { id },
+      data: {
+        ...(updateAdminCategoryDto.name !== undefined
+          ? { name: updateAdminCategoryDto.name }
+          : {}),
+        ...(updateAdminCategoryDto.slug !== undefined
+          ? { slug: updateAdminCategoryDto.slug }
+          : {}),
+        ...(updateAdminCategoryDto.isActive !== undefined
+          ? { isActive: updateAdminCategoryDto.isActive }
+          : {}),
+        ...(updateAdminCategoryDto.imageWebUrl !== undefined
+          ? { imageWebUrl: updateAdminCategoryDto.imageWebUrl }
+          : {}),
+        ...(updateAdminCategoryDto.imageMobileUrl !== undefined
+          ? { imageMobileUrl: updateAdminCategoryDto.imageMobileUrl }
+          : {}),
+      },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        isActive: true,
+        imageWebUrl: true,
+        imageMobileUrl: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: {
+          select: {
+            products: true,
+          },
+        },
+      },
+    });
+
+    return {
+      message: 'Category updated successfully.',
+      data: updatedCategory,
     };
   }
 }
