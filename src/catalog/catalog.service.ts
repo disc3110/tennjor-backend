@@ -9,6 +9,8 @@ import { CreateAdminProductDto } from './dto/create-admin-product.dto';
 import { UpdateAdminProductDto } from './dto/update-admin-product.dto';
 import { CreateAdminProductVariantDto } from './dto/create-admin-product-variant.dto';
 import { UpdateAdminProductVariantDto } from './dto/update-admin-product-variant.dto';
+import { CreateAdminProductImageDto } from './dto/create-admin-product-image.dto';
+import { UpdateAdminProductImageDto } from './dto/update-admin-product-image.dto';
 
 @Injectable()
 export class CatalogService {
@@ -398,6 +400,121 @@ export class CatalogService {
     return {
       message: 'Product variant updated successfully.',
       data: updatedVariant,
+    };
+  }
+
+  async createAdminProductImage(
+    productId: string,
+    createAdminProductImageDto: CreateAdminProductImageDto,
+  ) {
+    const existingProduct = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true },
+    });
+
+    if (!existingProduct) {
+      throw new NotFoundException('Product not found.');
+    }
+
+    const createdImage = await this.prisma.productImage.create({
+      data: {
+        productId,
+        url: createAdminProductImageDto.url,
+        secureUrl: createAdminProductImageDto.secureUrl,
+        publicId: createAdminProductImageDto.publicId,
+        alt: createAdminProductImageDto.alt,
+        order: createAdminProductImageDto.order ?? 0,
+      },
+      select: {
+        id: true,
+        url: true,
+        secureUrl: true,
+        publicId: true,
+        alt: true,
+        order: true,
+        productId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return {
+      message: 'Product image created successfully.',
+      data: createdImage,
+    };
+  }
+
+  async updateAdminProductImage(
+    id: string,
+    updateAdminProductImageDto: UpdateAdminProductImageDto,
+  ) {
+    const existingImage = await this.prisma.productImage.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+
+    if (!existingImage) {
+      throw new NotFoundException('Product image not found.');
+    }
+
+    const updatedImage = await this.prisma.productImage.update({
+      where: { id },
+      data: {
+        ...(updateAdminProductImageDto.url !== undefined
+          ? { url: updateAdminProductImageDto.url }
+          : {}),
+        ...(updateAdminProductImageDto.secureUrl !== undefined
+          ? { secureUrl: updateAdminProductImageDto.secureUrl }
+          : {}),
+        ...(updateAdminProductImageDto.publicId !== undefined
+          ? { publicId: updateAdminProductImageDto.publicId }
+          : {}),
+        ...(updateAdminProductImageDto.alt !== undefined
+          ? { alt: updateAdminProductImageDto.alt }
+          : {}),
+        ...(updateAdminProductImageDto.order !== undefined
+          ? { order: updateAdminProductImageDto.order }
+          : {}),
+      },
+      select: {
+        id: true,
+        url: true,
+        secureUrl: true,
+        publicId: true,
+        alt: true,
+        order: true,
+        productId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return {
+      message: 'Product image updated successfully.',
+      data: updatedImage,
+    };
+  }
+
+  async deleteAdminProductImage(id: string) {
+    const existingImage = await this.prisma.productImage.findUnique({
+      where: { id },
+      select: { id: true, publicId: true },
+    });
+
+    if (!existingImage) {
+      throw new NotFoundException('Product image not found.');
+    }
+
+    await this.prisma.productImage.delete({
+      where: { id },
+    });
+
+    return {
+      message: 'Product image deleted successfully.',
+      data: {
+        id: existingImage.id,
+        publicId: existingImage.publicId,
+      },
     };
   }
 }

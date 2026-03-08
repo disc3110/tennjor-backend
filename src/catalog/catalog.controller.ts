@@ -7,6 +7,7 @@ import {
   Post,
   Patch,
   UseGuards,
+  Delete,
 } from '@nestjs/common';
 import { CatalogService } from './catalog.service';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
@@ -14,6 +15,8 @@ import { CreateAdminProductDto } from './dto/create-admin-product.dto';
 import { UpdateAdminProductDto } from './dto/update-admin-product.dto';
 import { CreateAdminProductVariantDto } from './dto/create-admin-product-variant.dto';
 import { UpdateAdminProductVariantDto } from './dto/update-admin-product-variant.dto';
+import { CreateAdminProductImageDto } from './dto/create-admin-product-image.dto';
+import { UpdateAdminProductImageDto } from './dto/update-admin-product-image.dto';
 
 @Controller()
 export class CatalogController {
@@ -73,5 +76,35 @@ export class CatalogController {
       id,
       updateAdminProductVariantDto,
     );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('admin/products/:productId/images')
+  createAdminProductImage(
+    @Param('productId') productId: string,
+    @Body() createAdminProductImageDto: CreateAdminProductImageDto,
+  ) {
+    return this.catalogService.createAdminProductImage(
+      productId,
+      createAdminProductImageDto,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('admin/product-images/:id')
+  updateAdminProductImage(
+    @Param('id') id: string,
+    @Body() updateAdminProductImageDto: UpdateAdminProductImageDto,
+  ) {
+    return this.catalogService.updateAdminProductImage(
+      id,
+      updateAdminProductImageDto,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Delete('admin/product-images/:id')
+  deleteAdminProductImage(@Param('id') id: string) {
+    return this.catalogService.deleteAdminProductImage(id);
   }
 }

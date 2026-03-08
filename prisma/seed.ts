@@ -20,7 +20,6 @@ const prisma = new PrismaClient({ adapter });
 async function main() {
   console.log('🌱 Seeding database...');
 
-  // ✅ Shared product images (used by ALL categories)
   const sharedProductImages = [
     'https://res.cloudinary.com/dox2ajvii/image/upload/v1772735026/casual_blanco_1512x.jpg_b5nexc.webp',
     'https://res.cloudinary.com/dox2ajvii/image/upload/v1772735027/ICON_BLUE_TENIS_CONCORD_AZUL_1512x.jpg_bhsxub.webp',
@@ -34,13 +33,14 @@ async function main() {
     'https://res.cloudinary.com/dox2ajvii/image/upload/v1772735614/TENISCORRERCONCORD2_1512x.jpg_q4mz8v.webp',
   ];
 
-  // ✅ Shared category images (used by ALL categories)
   const sharedCategoryImageWebUrl =
     'https://res.cloudinary.com/dox2ajvii/image/upload/v1772736914/IMPROVE-YOUR-PERFORMANCE_ruyo3b.jpg';
   const sharedCategoryImageMobileUrl =
     'https://res.cloudinary.com/dox2ajvii/image/upload/v1772737572/DSC_6645_720x_ndhuvl.jpg';
 
   // --- Clean tables in FK-safe order ---
+  await prisma.quoteRequestItem.deleteMany();
+  await prisma.quoteRequest.deleteMany();
   await prisma.productVariant.deleteMany();
   await prisma.productImage.deleteMany();
   await prisma.product.deleteMany();
@@ -48,7 +48,6 @@ async function main() {
   await prisma.user.deleteMany();
   await prisma.storeConfig.deleteMany();
 
-  // --- Store config (single row) ---
   await prisma.storeConfig.create({
     data: {
       whatsappPhone: '+5215555555555',
@@ -57,13 +56,17 @@ async function main() {
   });
   console.log('🏬 StoreConfig created');
 
-  // --- Hash demo passwords ---
   const adminPasswordHash = await bcrypt.hash('Admin123', 10);
   const userPasswordHash = await bcrypt.hash('User123', 10);
 
-  // --- Users ---
-  const admin = await prisma.user.create({
-    data: {
+  const admin = await prisma.user.upsert({
+    where: { email: 'admin@example.com' },
+    update: {
+      password: adminPasswordHash,
+      name: 'Admin Demo',
+      role: UserRole.ADMIN,
+    },
+    create: {
       email: 'admin@example.com',
       password: adminPasswordHash,
       name: 'Admin Demo',
@@ -71,8 +74,14 @@ async function main() {
     },
   });
 
-  const customer = await prisma.user.create({
-    data: {
+  const customer = await prisma.user.upsert({
+    where: { email: 'cliente@example.com' },
+    update: {
+      password: userPasswordHash,
+      name: 'Cliente Demo',
+      role: UserRole.USER,
+    },
+    create: {
       email: 'cliente@example.com',
       password: userPasswordHash,
       name: 'Cliente Demo',
@@ -82,7 +91,6 @@ async function main() {
 
   console.log('👤 Users created:', admin.email, customer.email);
 
-  // --- Categories (ALL share same images) ---
   const futbol = await prisma.category.create({
     data: {
       name: 'Fútbol',
@@ -162,13 +170,12 @@ async function main() {
     accesorios,
     tennis,
   ];
+
   console.log(
     '📦 Categories created:',
     categories.map((c) => c.slug).join(', '),
   );
 
-  // --- Products + images + variants ---
-  // Helpers
   const slugify = (s: string) =>
     s
       .toLowerCase()
@@ -199,6 +206,7 @@ async function main() {
     '29',
     '29.5',
   ];
+
   const colors = [
     'Negro',
     'Blanco',
@@ -211,26 +219,34 @@ async function main() {
     'Amarillo',
   ];
 
-  // --- Cloudinary helpers ---
-  // Cloudinary can remove background via transformation (often requires enabling/paid feature).
-  // Keep it OFF by default so your current URLs don't break.
+  const extractCloudinaryPublicId = (url: string) => {
+    const marker = '/upload/';
+    if (!url.includes('res.cloudinary.com') || !url.includes(marker)) {
+      return null;
+    }
+
+    const afterUpload = url.split(marker)[1];
+    if (!afterUpload) {
+      return null;
+    }
+
+    const parts = afterUpload.split('/').filter(Boolean);
+    const withoutVersion = parts[0]?.match(/^v\d+$/) ? parts.slice(1) : parts;
+    const joined = withoutVersion.join('/');
+
+    return joined.replace(/\.[^/.]+$/, '');
+  };
+
   const ENABLE_BG_REMOVAL = false;
 
   const withCloudinaryTransform = (url: string) => {
-    // Only transform Cloudinary URLs
     const marker = '/upload/';
-    if (!url.includes('res.cloudinary.com') || !url.includes(marker))
+    if (!url.includes('res.cloudinary.com') || !url.includes(marker)) {
       return url;
+    }
 
-    // Fit + consistent sizing for cards (helps Next/Image render nicely)
-    // - c_fit keeps full shoe inside the box
-    // - w/h sets a predictable square
-    // - f_auto/q_auto optimizes format/quality
     const base = 'c_fit,w_900,h_900,f_auto,q_auto';
-    const fx = ENABLE_BG_REMOVAL
-      ? // Background removal (may require Cloudinary add-on / plan)
-        `e_background_removal,${base}`
-      : base;
+    const fx = ENABLE_BG_REMOVAL ? `e_background_removal,${base}` : base;
 
     return url.replace(marker, `${marker}${fx}/`);
   };
@@ -241,7 +257,6 @@ async function main() {
     skuBase: string,
     colorList: string[],
   ) => {
-    // Build a list of sizes between min and max, then pick a few to keep seed light.
     const available = shoeSizes
       .map((s) => ({ s, n: Number(s) }))
       .filter((x) => !Number.isNaN(x.n) && x.n >= min && x.n <= max)
@@ -252,6 +267,7 @@ async function main() {
       available[Math.floor(available.length / 2)],
       available[available.length - 1],
     ].filter(Boolean);
+
     const pickedColors = (
       colorList?.length ? colorList : [pick(colors, 0), pick(colors, 3)]
     ).slice(0, 3);
@@ -277,27 +293,33 @@ async function main() {
     seedKey: string,
     urls: string[],
     index: number,
-  ) => ({
-    create: [
-      {
-        url: withCloudinaryTransform(pick(urls, index)),
-        alt: `${seedKey} - imagen 1`,
-        order: 1,
-      },
-      {
-        url: withCloudinaryTransform(pick(urls, index + 1)),
-        alt: `${seedKey} - imagen 2`,
-        order: 2,
-      },
-    ],
-  });
+  ) => {
+    const firstOriginalUrl = pick(urls, index);
+    const secondOriginalUrl = pick(urls, index + 1);
 
-  // --- Concord MAYOREO 2026 catalog products (SKU is the key) ---
-  // Note: Category mapping:
-  // - futbol: soccer tacos + kangaroo leather
-  // - futbol-rapido: turf/futsal models
-  // - casuales: classic/icon
-  // - running: R110*
+    const firstTransformedUrl = withCloudinaryTransform(firstOriginalUrl);
+    const secondTransformedUrl = withCloudinaryTransform(secondOriginalUrl);
+
+    return {
+      create: [
+        {
+          url: firstTransformedUrl,
+          secureUrl: firstTransformedUrl,
+          publicId: extractCloudinaryPublicId(firstOriginalUrl),
+          alt: `${seedKey} - imagen 1`,
+          order: 1,
+        },
+        {
+          url: secondTransformedUrl,
+          secureUrl: secondTransformedUrl,
+          publicId: extractCloudinaryPublicId(secondOriginalUrl),
+          alt: `${seedKey} - imagen 2`,
+          order: 2,
+        },
+      ],
+    };
+  };
+
   const concordProducts: Array<{
     sku: string;
     name: string;
@@ -308,7 +330,6 @@ async function main() {
     sizeMax: number;
     colors: string[];
   }> = [
-    // FUTBOL (Soccer)
     {
       sku: 'S224TA',
       name: 'Prime Leather Blue',
@@ -359,7 +380,6 @@ async function main() {
       sizeMax: 29.5,
       colors: ['Blanco', 'Negro', 'Amarillo'],
     },
-
     {
       sku: 'S222XV',
       name: 'Retro',
@@ -390,7 +410,6 @@ async function main() {
       sizeMax: 29.5,
       colors: ['Blanco', 'Azul'],
     },
-    // Appears with two size ranges in catalog; we seed the wider one
     {
       sku: 'S222XC',
       name: 'Retro',
@@ -401,7 +420,6 @@ async function main() {
       sizeMax: 29.5,
       colors: ['Blanco', 'Rojo'],
     },
-
     {
       sku: 'S222XP',
       name: 'Futbol Pro',
@@ -422,7 +440,6 @@ async function main() {
       sizeMax: 29.5,
       colors: ['Azul', 'Naranja'],
     },
-
     {
       sku: 'S223XG',
       name: 'Futbol Elite',
@@ -443,7 +460,6 @@ async function main() {
       sizeMax: 29.5,
       colors: ['Negro', 'Café'],
     },
-
     {
       sku: 'S185XB',
       name: 'Futbol Classic',
@@ -464,8 +480,6 @@ async function main() {
       sizeMax: 29.5,
       colors: ['Negro'],
     },
-
-    // TPU line
     {
       sku: 'S220GA',
       name: 'Speed Pro',
@@ -496,8 +510,6 @@ async function main() {
       sizeMax: 29.5,
       colors: ['Blanco', 'Negro'],
     },
-
-    // FUTBOL RAPIDO (Turf/Futsal)
     {
       sku: 'S224MN',
       name: 'Prime Leather X',
@@ -538,7 +550,6 @@ async function main() {
       sizeMax: 29.5,
       colors: ['Blanco', 'Amarillo'],
     },
-
     {
       sku: 'S222F',
       name: 'Futbol Rapido',
@@ -589,7 +600,6 @@ async function main() {
       sizeMax: 29.5,
       colors: ['Gris', 'Amarillo'],
     },
-
     {
       sku: 'S222FC',
       name: 'Futbol Rapido',
@@ -610,7 +620,6 @@ async function main() {
       sizeMax: 29.5,
       colors: ['Azul', 'Naranja'],
     },
-
     {
       sku: 'S220F0',
       name: 'Futbol Rapido Pro',
@@ -621,7 +630,6 @@ async function main() {
       sizeMax: 29.5,
       colors: ['Rojo'],
     },
-
     {
       sku: 'S208QN',
       name: 'Futbol Rapido',
@@ -652,8 +660,6 @@ async function main() {
       sizeMax: 29.5,
       colors: ['Blanco'],
     },
-
-    // CASUAL
     {
       sku: 'C200DN',
       name: 'Classic Black',
@@ -724,8 +730,6 @@ async function main() {
       sizeMax: 29.5,
       colors: ['Blanco'],
     },
-
-    // RUNNING
     {
       sku: 'R110CN',
       name: 'Runner',
@@ -756,8 +760,6 @@ async function main() {
       sizeMax: 29.5,
       colors: ['Gris', 'Naranja'],
     },
-
-    // PIEL DE CANGURO
     {
       sku: 'K222XB',
       name: 'Kangaroo Pro',
@@ -802,6 +804,7 @@ async function main() {
   for (let i = 0; i < concordProducts.length; i++) {
     const p = concordProducts[i];
     const categoryId = categoryIdBySlug.get(p.categorySlug);
+
     if (!categoryId) {
       console.warn(
         `⚠️  Skipping ${p.sku} because category slug not found: ${p.categorySlug}`,

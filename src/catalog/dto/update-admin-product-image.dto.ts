@@ -1,8 +1,9 @@
 import { IsInt, IsOptional, IsString, IsUrl, Min } from 'class-validator';
 
-export class CreateAdminProductImageDto {
+export class UpdateAdminProductImageDto {
+  @IsOptional()
   @IsUrl()
-  url: string;
+  url?: string;
 
   @IsOptional()
   @IsUrl()
