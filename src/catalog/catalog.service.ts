@@ -11,6 +11,8 @@ import { CreateAdminProductVariantDto } from './dto/create-admin-product-variant
 import { UpdateAdminProductVariantDto } from './dto/update-admin-product-variant.dto';
 import { CreateAdminProductImageDto } from './dto/create-admin-product-image.dto';
 import { UpdateAdminProductImageDto } from './dto/update-admin-product-image.dto';
+import { FindAdminProductsDto } from './dto/find-admin-products.dto';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class CatalogService {
@@ -515,6 +517,157 @@ export class CatalogService {
         id: existingImage.id,
         publicId: existingImage.publicId,
       },
+    };
+  }
+
+  async findAllAdminProducts(query: FindAdminProductsDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const skip = (page - 1) * limit;
+
+    const where: Prisma.ProductWhereInput = {
+      ...(query.search
+        ? {
+            OR: [
+              {
+                name: {
+                  contains: query.search,
+                  mode: 'insensitive',
+                },
+              },
+              {
+                slug: {
+                  contains: query.search,
+                  mode: 'insensitive',
+                },
+              },
+            ],
+          }
+        : {}),
+      ...(query.categoryId ? { categoryId: query.categoryId } : {}),
+      ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
+    };
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.product.findMany({
+        where,
+        orderBy: {
+          createdAt: 'desc',
+        },
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          description: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+          category: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+            },
+          },
+          images: {
+            orderBy: {
+              order: 'asc',
+            },
+            select: {
+              id: true,
+              url: true,
+              secureUrl: true,
+              publicId: true,
+              alt: true,
+              order: true,
+            },
+          },
+          variants: {
+            orderBy: {
+              size: 'asc',
+            },
+            select: {
+              id: true,
+              size: true,
+              color: true,
+              sku: true,
+              isActive: true,
+              stock: true,
+            },
+          },
+        },
+      }),
+      this.prisma.product.count({ where }),
+    ]);
+
+    return {
+      data: items,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async findOneAdminProduct(id: string) {
+    const product = await this.prisma.product.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+        category: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+        images: {
+          orderBy: {
+            order: 'asc',
+          },
+          select: {
+            id: true,
+            url: true,
+            secureUrl: true,
+            publicId: true,
+            alt: true,
+            order: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
+        variants: {
+          orderBy: {
+            size: 'asc',
+          },
+          select: {
+            id: true,
+            size: true,
+            color: true,
+            sku: true,
+            isActive: true,
+            stock: true,
+          },
+        },
+      },
+    });
+
+    if (!product) {
+      throw new NotFoundException('Product not found.');
+    }
+
+    return {
+      data: product,
     };
   }
 }
