@@ -1,8 +1,11 @@
 import {
   IsArray,
   IsBoolean,
+  IsNumber,
   IsOptional,
   IsString,
+  Matches,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -23,6 +26,17 @@ export class CreateAdminProductDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  baseCost?: number;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Z]{3}$/)
+  costCurrency?: string;
 
   @IsString()
   categoryId: string;

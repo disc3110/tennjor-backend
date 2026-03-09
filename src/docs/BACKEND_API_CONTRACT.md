@@ -247,6 +247,7 @@ curl -X GET http://localhost:3000/catalog/categories
   - `category`
   - `images` ordered by `order ASC`
   - `variants` filtered to `isActive=true`
+  - does **not** include internal cost fields (`baseCost`, `costCurrency`)
 - Error cases: None custom.
 - Example request:
 
@@ -314,6 +315,7 @@ curl -X GET 'http://localhost:3000/catalog/products?category=tenis'
 - Query: None.
 - Request body: None.
 - Response body: Same shape as a single item from `/catalog/products`.
+  - does **not** include internal cost fields (`baseCost`, `costCurrency`)
 - Error cases:
   - `404` product missing or inactive (`"Product not found"`)
 - Example request:
@@ -530,6 +532,7 @@ quoteRequests,qr_1,Diego,diego@example.com,+1555123456,Vancouver,NEW,WEB_FORM,2,
 - Request body: None.
 - Response body:
   - `{ data: ProductAdmin[], meta: { total, page, limit, totalPages } }`
+  - includes internal fields: `baseCost` (nullable decimal) and `costCurrency` (3-letter currency code)
 - Error cases:
   - `401` auth
   - `400` validation for query types/ranges
@@ -551,6 +554,8 @@ curl -X GET 'http://localhost:3000/admin/products?page=1&limit=10&isActive=true'
       "slug": "tenis-alpha",
       "description": "...",
       "isActive": true,
+      "baseCost": "350.00",
+      "costCurrency": "MXN",
       "createdAt": "...",
       "updatedAt": "...",
       "category": { "id": "cat_1", "name": "Tênis", "slug": "tenis" },
@@ -622,6 +627,7 @@ prod_1,Tênis Alpha,tenis-alpha,Caminhada,true,cat_1,Tênis,2,3,18,2026-03-01T10
 - Query: None.
 - Request body: None.
 - Response body: `{ data: ProductAdminDetail }`.
+  - includes internal fields: `baseCost` and `costCurrency`
 - Error cases:
   - `401` auth
   - `404` product not found
@@ -642,6 +648,8 @@ curl -X GET http://localhost:3000/admin/products/prod_1 \
     "slug": "tenis-alpha",
     "description": "...",
     "isActive": true,
+    "baseCost": "350.00",
+    "costCurrency": "MXN",
     "createdAt": "...",
     "updatedAt": "...",
     "category": { "id": "cat_1", "name": "Tênis", "slug": "tenis" },
@@ -680,6 +688,7 @@ curl -X GET http://localhost:3000/admin/products/prod_1 \
 - Request body:
   - `name`, `slug`, `categoryId` required
   - optional: `description`, `isActive`
+  - optional: `baseCost` (number, `>= 0`, max 2 decimals), `costCurrency` (string, 3 uppercase letters like `MXN`)
   - optional `images[]` and `variants[]` nested DTO arrays
 - Response body:
   - `{ message: "Product created successfully.", data: ... }`
@@ -699,6 +708,8 @@ curl -X POST http://localhost:3000/admin/products \
     "slug":"tenis-alpha",
     "description":"Caminhada",
     "categoryId":"cat_1",
+    "baseCost":350,
+    "costCurrency":"MXN",
     "images":[{"url":"https://cdn.example.com/alpha-1.jpg","alt":"Front","order":0}],
     "variants":[{"size":"42","color":"Preto","sku":"TEN-42-PR","stock":8}]
   }'
@@ -715,6 +726,8 @@ curl -X POST http://localhost:3000/admin/products \
     "slug": "tenis-alpha",
     "description": "Caminhada",
     "isActive": true,
+    "baseCost": "350.00",
+    "costCurrency": "MXN",
     "createdAt": "...",
     "updatedAt": "...",
     "category": { "id": "cat_1", "name": "Tênis", "slug": "tenis" },
@@ -747,7 +760,7 @@ curl -X POST http://localhost:3000/admin/products \
 - Params: `id`.
 - Query: None.
 - Request body: any subset of
-  - `name`, `slug`, `description`, `isActive`, `categoryId`
+  - `name`, `slug`, `description`, `isActive`, `categoryId`, `baseCost`, `costCurrency`
 - Response body:
   - `{ message: "Product updated successfully.", data: ... }`
 - Error cases:
@@ -755,6 +768,7 @@ curl -X POST http://localhost:3000/admin/products \
   - `404` product not found
   - `400` category not found
   - `400` slug already exists
+  - `400` invalid cost values (`baseCost < 0`, more than 2 decimals, or invalid `costCurrency` format)
 - Example request:
 
 ```bash
@@ -775,6 +789,8 @@ curl -X PATCH http://localhost:3000/admin/products/prod_1 \
     "slug": "tenis-alpha",
     "description": "Caminhada",
     "isActive": false,
+    "baseCost": "350.00",
+    "costCurrency": "MXN",
     "createdAt": "...",
     "updatedAt": "...",
     "category": { "id": "cat_1", "name": "Tênis", "slug": "tenis" },
@@ -1548,6 +1564,10 @@ curl -X PATCH http://localhost:3000/admin/quote-requests/qr_1/status \
 - Public product list returns only `isActive = true` products.
 - Optional `category` query uses category slug, and category must also be active.
 - Product detail by slug returns `404` when product inactive.
+- Internal cost tracking is at product level:
+  - `baseCost` (nullable decimal)
+  - `costCurrency` (defaults to `MXN`)
+- Internal cost fields are exposed only in admin product endpoints and are intentionally omitted from public catalog endpoints.
 
 ### Product Variants
 
@@ -1555,6 +1575,7 @@ curl -X PATCH http://localhost:3000/admin/quote-requests/qr_1/status \
 - `sku` is optional but unique when present.
 - Public endpoints include only active variants.
 - Admin endpoints expose and can edit `isActive` and `stock`.
+- TODO: variant-level cost fields are not implemented yet (future extension for per-size/per-color cost strategies).
 
 ### Product Images
 
