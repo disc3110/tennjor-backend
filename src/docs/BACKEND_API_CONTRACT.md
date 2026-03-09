@@ -16,6 +16,7 @@ API domains covered:
 - Admin catalog management
 - Quote requests (public create + admin management)
 - Admin dashboard stats
+- Internal sales foundation (schema only in this step; no endpoints yet)
 - Utility endpoints (`/`, `/users`)
 
 Data store is PostgreSQL via Prisma.
@@ -29,6 +30,42 @@ Data store is PostgreSQL via Prisma.
 CORS:
 
 - CORS is enabled with `origin: true` and `credentials: true`.
+
+## Internal Sales Domain
+
+Implemented in this step:
+
+- Prisma schema foundation for internal commercial workflow.
+- New tables/models:
+  - `InternalSaleQuote`
+  - `InternalSaleQuoteItem`
+  - `CompletedSale`
+  - `CompletedSaleItem`
+- New enums:
+  - `InternalSaleQuoteStatus`
+  - `CompletedSaleStatus`
+  - `DiscountType`
+- Migration added for table creation, enums, indexes, and relations.
+- First working backend routes for internal sales quotes:
+  - quote create/list/detail/update
+  - quote item add/update/delete
+  - quote totals recalculate
+
+Not implemented in this step:
+
+- Completed sale workflow endpoints/commands are not implemented yet.
+- No sale completion transaction endpoint in this step.
+
+Design notes:
+
+- This internal sales domain remains separate from public `QuoteRequest`.
+- `InternalSaleQuote` can optionally reference `QuoteRequest` (`publicQuoteRequestId`) for lead traceability.
+- Monetary fields are snapshot-oriented to preserve historical revenue/cost/profit accuracy independent of later catalog changes.
+
+Planned next endpoints (future PR, not implemented now):
+
+- Complete quote into immutable completed sale
+- List/detail completed sales
 
 ## Authentication
 
@@ -86,6 +123,14 @@ Common validation constraints used:
 | POST   | `/quote-requests`                     | No            | No            | Create quote request                          |
 | GET    | `/admin/dashboard/stats`              | Yes           | No (JWT only) | Dashboard KPIs                                |
 | GET    | `/admin/dashboard/stats/export/csv`   | Yes           | Yes           | Download dashboard stats + quote requests CSV |
+| POST   | `/admin/sales-quotes`                 | Yes           | Yes           | Create internal sale quote draft              |
+| GET    | `/admin/sales-quotes`                 | Yes           | Yes           | List internal sale quotes                     |
+| GET    | `/admin/sales-quotes/:id`             | Yes           | Yes           | Get internal sale quote detail                |
+| PATCH  | `/admin/sales-quotes/:id`             | Yes           | Yes           | Update internal sale quote header (DRAFT)     |
+| POST   | `/admin/sales-quotes/:id/items`       | Yes           | Yes           | Add internal sale quote item                  |
+| PATCH  | `/admin/sales-quotes/:id/items/:itemId` | Yes         | Yes           | Update internal sale quote item               |
+| DELETE | `/admin/sales-quotes/:id/items/:itemId` | Yes        | Yes           | Delete internal sale quote item               |
+| POST   | `/admin/sales-quotes/:id/recalculate` | Yes           | Yes           | Recalculate internal sale quote totals        |
 | GET    | `/admin/products`                     | Yes           | No (JWT only) | Admin product list                            |
 | GET    | `/admin/products/export/csv`          | Yes           | Yes           | Download products CSV                         |
 | GET    | `/admin/products/:id`                 | Yes           | No (JWT only) | Admin product detail                          |
@@ -517,6 +562,110 @@ topRequestedProducts,prod_1,Tênis Alpha,tenis-alpha,45,18
 section,id,customerName,customerEmail,customerPhone,customerCity,status,source,itemsCount,totalRequestedQuantity,notes,internalNotes,createdAt,updatedAt
 quoteRequests,qr_1,Diego,diego@example.com,+1555123456,Vancouver,NEW,WEB_FORM,2,3,Need delivery estimate,,2026-03-07T20:00:00.000Z,2026-03-07T20:00:00.000Z
 ```
+
+### POST `/admin/sales-quotes`
+
+- Purpose: Create an internal sales quote in `DRAFT` status.
+- Auth requirements: JWT + ADMIN role required.
+- Request body:
+  - `customerName` (required)
+  - `customerPhone?`, `customerEmail?`, `customerCity?`, `notes?`
+  - `currency?` (3-letter uppercase code, default `MXN`)
+  - `publicQuoteRequestId?` (optional link to public quote request)
+- Behavior:
+  - `createdByUserId` is taken from authenticated user.
+  - quote code is generated server-side (format `SQ-<year>-<6-digit-seq>`).
+  - totals start at zero.
+- Response body:
+  - `{ message: "Internal sale quote created successfully.", data: QuoteHeader }`
+
+### GET `/admin/sales-quotes`
+
+- Purpose: List internal sales quotes.
+- Auth requirements: JWT + ADMIN role required.
+- Query:
+  - `status?` (`DRAFT|SENT|APPROVED|REJECTED|EXPIRED|COMPLETED`)
+  - `search?` (matches `code` or `customerName`, case-insensitive)
+  - `page?`, `limit?`
+- Response body:
+  - `{ data: QuoteSummary[], meta: { total, page, limit, totalPages } }`
+
+### GET `/admin/sales-quotes/:id`
+
+- Purpose: Fetch quote header + items + linked summaries.
+- Auth requirements: JWT + ADMIN role required.
+- Response body:
+  - `{ data: QuoteDetail }` including:
+  - quote items snapshots
+  - optional `publicQuoteRequest` summary
+  - `createdBy` summary
+- Error cases:
+  - `404` internal sale quote not found
+
+### PATCH `/admin/sales-quotes/:id`
+
+- Purpose: Update quote-level editable fields while quote is editable (`DRAFT`).
+- Auth requirements: JWT + ADMIN role required.
+- Editable fields:
+  - `customerName?`, `customerPhone?`, `customerEmail?`, `customerCity?`, `notes?`
+  - `currency?`
+  - `discountTotal?` (`>= 0`)
+- Behavior:
+  - rejects non-`DRAFT` quotes for edits
+  - recalculates totals after update
+- Response body:
+  - `{ data: QuoteDetail }`
+
+### POST `/admin/sales-quotes/:id/items`
+
+- Purpose: Add item snapshot to quote.
+- Auth requirements: JWT + ADMIN role required.
+- Request body:
+  - `productId` (required)
+  - `variantId?` (must belong to product when provided)
+  - `quantity` (`> 0`)
+  - `unitSalePrice` (`>= 0`)
+  - `unitCostSnapshot?` (`>= 0`, defaults to `product.baseCost` or `0`)
+  - `discountType?` (`FIXED|PERCENTAGE`)
+  - `discountValue?` (`>= 0`, requires `discountType`)
+  - `sortOrder?` (`>= 0`)
+- Behavior:
+  - snapshots product/variant fields into quote item
+  - computes `lineRevenue`, `lineCost`, `lineProfit`
+  - recalculates quote totals
+- Response body:
+  - `{ message: "Quote item added successfully.", data: { item, quoteTotals } }`
+
+### PATCH `/admin/sales-quotes/:id/items/:itemId`
+
+- Purpose: Update quote item values and recompute.
+- Auth requirements: JWT + ADMIN role required.
+- Editable fields:
+  - `quantity?`, `unitSalePrice?`, `unitCostSnapshot?`
+  - `discountType?`, `discountValue?`, `sortOrder?`
+- Behavior:
+  - validates discount pair consistency
+  - recalculates item line totals
+  - recalculates quote totals
+- Response body:
+  - `{ message: "Quote item updated successfully.", data: { item, quoteTotals } }`
+
+### DELETE `/admin/sales-quotes/:id/items/:itemId`
+
+- Purpose: Delete quote item and recalculate quote totals.
+- Auth requirements: JWT + ADMIN role required.
+- Response body:
+  - `{ message: "Quote item deleted successfully.", data: { id, quoteTotals } }`
+
+### POST `/admin/sales-quotes/:id/recalculate`
+
+- Purpose: Force full server-side recalculation from current item snapshots.
+- Auth requirements: JWT + ADMIN role required.
+- Behavior:
+  - recomputes each item line totals
+  - recomputes quote header totals (`subtotal`, `totalRevenue`, `totalCost`, `totalProfit`, `marginPct`)
+- Response body:
+  - `{ message: "Quote totals recalculated successfully.", data: QuoteTotals }`
 
 ### GET `/admin/products`
 
@@ -1627,6 +1776,14 @@ Suggested service function names:
 - `getAdminQuoteRequests(query)`
 - `getAdminQuoteRequest(id)`
 - `updateAdminQuoteRequestStatus(id, payload)`
+- `createInternalSaleQuote(payload)`
+- `getInternalSaleQuotes(query)`
+- `getInternalSaleQuote(id)`
+- `updateInternalSaleQuote(id, payload)`
+- `addInternalSaleQuoteItem(id, payload)`
+- `updateInternalSaleQuoteItem(id, itemId, payload)`
+- `deleteInternalSaleQuoteItem(id, itemId)`
+- `recalculateInternalSaleQuote(id)`
 
 Important fields for UI rendering:
 
@@ -1642,7 +1799,7 @@ Important fields for UI rendering:
 
 Known pitfalls:
 
-- Most admin JSON endpoints are JWT-protected but not role-guarded; only CSV export endpoints currently enforce the ADMIN role explicitly.
+- Most admin JSON endpoints are JWT-protected but not role-guarded; CSV export and internal sales quote endpoints enforce ADMIN role explicitly.
 - CSV export endpoints require `ADMIN` role and return plain text CSV, not JSON.
 - DTO whitelist + forbid non-whitelisted means frontend must avoid extra properties in payloads.
 - Boolean query parsing depends on transform; send explicit `true`/`false` strings.

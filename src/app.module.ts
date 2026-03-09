@@ -8,6 +8,7 @@ import { CatalogModule } from './catalog/catalog.module';
 import { QuoteRequestsModule } from './quote-requests/quote-requests.module';
 import { AuthModule } from './auth/auth.module';
 import { AdminDashboardModule } from './admin-dashboard/admin-dashboard.module';
+import { SalesQuotesModule } from './sales-quotes/sales-quotes.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { AdminDashboardModule } from './admin-dashboard/admin-dashboard.module';
     QuoteRequestsModule,
     AuthModule,
     AdminDashboardModule,
+    SalesQuotesModule,
   ],
   controllers: [AppController],
   providers: [AppService],
