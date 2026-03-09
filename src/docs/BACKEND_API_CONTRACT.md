@@ -106,6 +106,7 @@ Common validation constraints used:
 | GET    | `/admin/dashboard/stats`              | Yes           | No (JWT only) | Dashboard KPIs                                |
 | GET    | `/admin/dashboard/stats/export/csv`   | Yes           | Yes           | Download dashboard stats + quote requests CSV |
 | GET    | `/admin/products`                     | Yes           | No (JWT only) | Admin product list                            |
+| POST   | `/admin/products/import/csv`         | Yes           | No (JWT only) | Bulk import products from CSV (create/update by slug) |
 | GET    | `/admin/products/export/csv`          | Yes           | Yes           | Download products CSV                         |
 | GET    | `/admin/products/:id`                 | Yes           | No (JWT only) | Admin product detail                          |
 | POST   | `/admin/products`                     | Yes           | No (JWT only) | Create product                                |
@@ -120,6 +121,7 @@ Common validation constraints used:
 | PATCH  | `/admin/product-images/:id`           | Yes           | No (JWT only) | Update product image                          |
 | DELETE | `/admin/product-images/:id`           | Yes           | No (JWT only) | Delete product image                          |
 | GET    | `/admin/categories`                   | Yes           | No (JWT only) | Admin category list                           |
+| POST   | `/admin/categories/import/csv`       | Yes           | No (JWT only) | Bulk import categories from CSV (create/update by slug) |
 | GET    | `/admin/categories/export/csv`        | Yes           | Yes           | Download categories CSV                       |
 | GET    | `/admin/categories/:id`               | Yes           | No (JWT only) | Admin category detail                         |
 | POST   | `/admin/categories`                   | Yes           | No (JWT only) | Create category                               |
@@ -599,6 +601,63 @@ curl -X GET 'http://localhost:3000/admin/products?page=1&limit=10&isActive=true'
     }
   ],
   "meta": { "total": 50, "page": 1, "limit": 10, "totalPages": 5 }
+}
+```
+
+### POST `/admin/products/import/csv`
+
+- Purpose: Bulk import products for admin catalog management.
+- Auth requirements: JWT required.
+- Params: None.
+- Query: None.
+- Request body:
+  - `multipart/form-data`
+  - required file field: `file`
+  - accepted file types: `text/csv`, `application/vnd.ms-excel`, `text/plain`
+  - max file size: `5MB`
+  - filename must end with `.csv`
+- Expected CSV columns:
+  - required: `name`, `slug`
+  - category reference: at least one of `categorySlug` or `categoryId`
+  - optional: `description`, `isActive`
+- Import behavior:
+  - create product when slug does not exist
+  - update product when slug already exists
+  - category references are resolved safely from existing categories only
+  - categories are **not auto-created** from product import
+  - row failures do not fail the whole import (partial success)
+- Response body:
+  - `{ message, data: { totalRows, createdCount, updatedCount, skippedCount, errors[] } }`
+  - `errors[]` entries include `{ row, reason }`
+- Error cases:
+  - `400` missing/invalid file
+  - `400` missing required headers
+  - `401` auth
+- Example request:
+
+```bash
+curl -X POST http://localhost:3000/admin/products/import/csv \
+  -H 'Authorization: Bearer <token>' \
+  -F 'file=@/path/to/products.csv'
+```
+
+- Example response:
+
+```json
+{
+  "message": "Products CSV import completed.",
+  "data": {
+    "totalRows": 5,
+    "createdCount": 2,
+    "updatedCount": 2,
+    "skippedCount": 1,
+    "errors": [
+      {
+        "row": 6,
+        "reason": "Category not found for categorySlug='unknown-category'."
+      }
+    ]
+  }
 }
 ```
 
@@ -1244,6 +1303,62 @@ curl -X GET 'http://localhost:3000/admin/categories?isActive=true' \
 }
 ```
 
+### POST `/admin/categories/import/csv`
+
+- Purpose: Bulk import categories for admin catalog management.
+- Auth requirements: JWT required.
+- Params: None.
+- Query: None.
+- Request body:
+  - `multipart/form-data`
+  - required file field: `file`
+  - accepted file types: `text/csv`, `application/vnd.ms-excel`, `text/plain`
+  - max file size: `5MB`
+  - filename must end with `.csv`
+- Expected CSV columns:
+  - required: `name`, `slug`
+  - optional: `isActive`, `imageWebUrl`, `imageMobileUrl`
+- Import behavior:
+  - create category when slug does not exist
+  - update category when slug already exists
+  - URL fields are validated if present
+  - accepts `null` value for image URL columns to clear URL value
+  - row failures do not fail the whole import (partial success)
+- Response body:
+  - `{ message, data: { totalRows, createdCount, updatedCount, skippedCount, errors[] } }`
+  - `errors[]` entries include `{ row, reason }`
+- Error cases:
+  - `400` missing/invalid file
+  - `400` missing required headers
+  - `401` auth
+- Example request:
+
+```bash
+curl -X POST http://localhost:3000/admin/categories/import/csv \
+  -H 'Authorization: Bearer <token>' \
+  -F 'file=@/path/to/categories.csv'
+```
+
+- Example response:
+
+```json
+{
+  "message": "Categories CSV import completed.",
+  "data": {
+    "totalRows": 4,
+    "createdCount": 1,
+    "updatedCount": 2,
+    "skippedCount": 1,
+    "errors": [
+      {
+        "row": 5,
+        "reason": "Field 'slug' is required."
+      }
+    ]
+  }
+}
+```
+
 ### GET `/admin/categories/export/csv`
 
 - Purpose: Export admin categories using same filters as admin category list.
@@ -1777,6 +1892,7 @@ curl -X PATCH http://localhost:3000/admin/quote-requests/qr_1/status \
 - `sku` is optional but unique when present.
 - Public endpoints include only active variants.
 - Admin endpoints expose and can edit `isActive` and `stock`.
+- TODO: CSV import endpoint for variants is not implemented yet in this iteration (deferred to keep first import version focused and reviewable).
 
 ### Product Images
 
@@ -1811,6 +1927,7 @@ Suggested service function names:
 - `getAdminDashboardStats()`
 - `exportAdminDashboardStatsCsv()`
 - `getAdminProducts(query)`
+- `importAdminProductsCsv(file)`
 - `exportAdminProductsCsv(query)`
 - `getAdminProduct(id)`
 - `createAdminProduct(payload)`
@@ -1821,6 +1938,7 @@ Suggested service function names:
 - `updateAdminProductImage(id, payload)`
 - `deleteAdminProductImage(id)`
 - `getAdminCategories(query)`
+- `importAdminCategoriesCsv(file)`
 - `exportAdminCategoriesCsv(query)`
 - `getAdminCategory(id)`
 - `createAdminCategory(payload)`

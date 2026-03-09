@@ -37,6 +37,12 @@ type UploadedImageFile = {
   originalname: string;
 };
 
+type UploadedCsvFile = {
+  buffer: Buffer;
+  originalname: string;
+  mimetype: string;
+};
+
 @Controller()
 export class CatalogController {
   constructor(private readonly catalogService: CatalogService) {}
@@ -184,6 +190,26 @@ export class CatalogController {
     return this.catalogService.findAllAdminProducts(query);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Post('admin/products/import/csv')
+  @UseInterceptors(FileInterceptor('file'))
+  importAdminProductsCsv(
+    @UploadedFile(
+      new ParseFilePipeBuilder()
+        .addFileTypeValidator({
+          fileType: /^(text\/csv|application\/vnd\.ms-excel|text\/plain)$/i,
+        })
+        .addMaxSizeValidator({ maxSize: 5 * 1024 * 1024 })
+        .build({
+          errorHttpStatusCode: HttpStatus.BAD_REQUEST,
+          fileIsRequired: true,
+        }),
+    )
+    file: UploadedCsvFile,
+  ) {
+    return this.catalogService.importAdminProductsCsv(file);
+  }
+
   @UseGuards(JwtAuthGuard, AdminRoleGuard)
   @Get('admin/products/export/csv')
   async exportAdminProductsCsv(
@@ -206,6 +232,26 @@ export class CatalogController {
   @Get('admin/categories')
   findAllAdminCategories(@Query() query: FindAdminCategoriesDto) {
     return this.catalogService.findAllAdminCategories(query);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('admin/categories/import/csv')
+  @UseInterceptors(FileInterceptor('file'))
+  importAdminCategoriesCsv(
+    @UploadedFile(
+      new ParseFilePipeBuilder()
+        .addFileTypeValidator({
+          fileType: /^(text\/csv|application\/vnd\.ms-excel|text\/plain)$/i,
+        })
+        .addMaxSizeValidator({ maxSize: 5 * 1024 * 1024 })
+        .build({
+          errorHttpStatusCode: HttpStatus.BAD_REQUEST,
+          fileIsRequired: true,
+        }),
+    )
+    file: UploadedCsvFile,
+  ) {
+    return this.catalogService.importAdminCategoriesCsv(file);
   }
 
   @UseGuards(JwtAuthGuard, AdminRoleGuard)

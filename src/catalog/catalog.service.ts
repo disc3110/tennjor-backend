@@ -21,10 +21,27 @@ import { UpdateAdminCategoryDto } from './dto/update-admin-category.dto';
 import { Prisma } from '@prisma/client';
 import { buildCsv } from 'src/common/utils/csv.util';
 import { CloudinaryService } from 'src/cloudinary/cloudinary.service';
+import {
+  isHeaderMissing,
+  parseCsvWithHeaders,
+  type CsvParsedRow,
+} from 'src/common/utils/csv-import.util';
+import { isURL } from 'class-validator';
 
 type UploadedImageFile = {
   buffer: Buffer;
   originalname: string;
+};
+
+type UploadedCsvFile = {
+  buffer: Buffer;
+  originalname: string;
+  mimetype: string;
+};
+
+type CsvImportError = {
+  row: number;
+  reason: string;
 };
 
 type CloudinaryCleanupResult = {
@@ -139,6 +156,85 @@ export class CatalogService {
     }
 
     return generatedSizes;
+  }
+
+  private ensureCsvFileExtension(filename: string) {
+    if (!filename.toLowerCase().endsWith('.csv')) {
+      throw new BadRequestException(
+        'Invalid file extension. Please upload a .csv file.',
+      );
+    }
+  }
+
+  private isRowCompletelyEmpty(row: CsvParsedRow): boolean {
+    return Object.values(row.values).every((value) => value.trim() === '');
+  }
+
+  private parseBooleanCell(
+    rawValue: string | undefined,
+    columnName: string,
+  ): boolean | undefined {
+    if (!rawValue || rawValue.trim() === '') {
+      return undefined;
+    }
+
+    const normalized = rawValue.trim().toLowerCase();
+    if (['true', '1', 'yes', 'y', 'si', 'sí'].includes(normalized)) {
+      return true;
+    }
+
+    if (['false', '0', 'no', 'n'].includes(normalized)) {
+      return false;
+    }
+
+    throw new Error(
+      `Invalid boolean value for '${columnName}': '${rawValue}'. Use true/false, yes/no, or 1/0.`,
+    );
+  }
+
+  private parseOptionalUrlCell(
+    rawValue: string | undefined,
+    columnName: string,
+  ): string | null | undefined {
+    if (rawValue === undefined) {
+      return undefined;
+    }
+
+    const normalized = rawValue.trim();
+    if (normalized === '') {
+      return undefined;
+    }
+
+    if (normalized.toLowerCase() === 'null') {
+      return null;
+    }
+
+    if (!isURL(normalized)) {
+      throw new Error(
+        `Invalid URL value for '${columnName}': '${rawValue}'. Use an absolute URL or 'null'.`,
+      );
+    }
+
+    return normalized;
+  }
+
+  private parseOptionalTextCell(
+    rawValue: string | undefined,
+  ): string | null | undefined {
+    if (rawValue === undefined) {
+      return undefined;
+    }
+
+    const normalized = rawValue.trim();
+    if (normalized === '') {
+      return undefined;
+    }
+
+    if (normalized.toLowerCase() === 'null') {
+      return null;
+    }
+
+    return normalized;
   }
 
   async getCategories(): Promise<Category[]> {
@@ -1162,6 +1258,332 @@ export class CatalogService {
     ]);
 
     return buildCsv(headers, rows);
+  }
+
+  async importAdminCategoriesCsv(file: UploadedCsvFile) {
+    this.ensureCsvFileExtension(file.originalname);
+
+    const parsed = parseCsvWithHeaders(file.buffer.toString('utf-8'));
+    if (parsed.headers.length === 0) {
+      throw new BadRequestException('CSV file is empty.');
+    }
+
+    const missingHeaders = isHeaderMissing(parsed.headers, ['name', 'slug']);
+    if (missingHeaders.length > 0) {
+      throw new BadRequestException(
+        `Missing required CSV headers: ${missingHeaders.join(', ')}`,
+      );
+    }
+
+    const errors: CsvImportError[] = [];
+    let createdCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+
+    for (const row of parsed.rows) {
+      if (this.isRowCompletelyEmpty(row)) {
+        skippedCount += 1;
+        continue;
+      }
+
+      try {
+        const name = (row.values.name ?? '').trim();
+        const slug = (row.values.slug ?? '').trim();
+
+        if (!name) {
+          throw new Error("Field 'name' is required.");
+        }
+
+        if (!slug) {
+          throw new Error("Field 'slug' is required.");
+        }
+
+        const isActive = this.parseBooleanCell(row.values.isActive, 'isActive');
+        const imageWebUrl = this.parseOptionalUrlCell(
+          row.values.imageWebUrl,
+          'imageWebUrl',
+        );
+        const imageMobileUrl = this.parseOptionalUrlCell(
+          row.values.imageMobileUrl,
+          'imageMobileUrl',
+        );
+
+        const existingCategory = await this.prisma.category.findUnique({
+          where: { slug },
+          select: {
+            id: true,
+            imageWebUrl: true,
+            imageMobileUrl: true,
+            imageWebPublicId: true,
+            imageMobilePublicId: true,
+          },
+        });
+
+        if (!existingCategory) {
+          await this.prisma.category.create({
+            data: {
+              name,
+              slug,
+              ...(isActive !== undefined ? { isActive } : {}),
+              ...(imageWebUrl !== undefined ? { imageWebUrl } : {}),
+              ...(imageMobileUrl !== undefined ? { imageMobileUrl } : {}),
+            },
+          });
+          createdCount += 1;
+          continue;
+        }
+
+        const updateData: Prisma.CategoryUpdateInput = {
+          name,
+          ...(isActive !== undefined ? { isActive } : {}),
+        };
+
+        if (imageWebUrl !== undefined) {
+          updateData.imageWebUrl = imageWebUrl;
+          if (imageWebUrl !== existingCategory.imageWebUrl) {
+            updateData.imageWebPublicId = null;
+          }
+        }
+
+        if (imageMobileUrl !== undefined) {
+          updateData.imageMobileUrl = imageMobileUrl;
+          if (imageMobileUrl !== existingCategory.imageMobileUrl) {
+            updateData.imageMobilePublicId = null;
+          }
+        }
+
+        await this.prisma.category.update({
+          where: { id: existingCategory.id },
+          data: updateData,
+        });
+        updatedCount += 1;
+      } catch (error) {
+        skippedCount += 1;
+        errors.push({
+          row: row.rowNumber,
+          reason: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }
+
+    return {
+      message: 'Categories CSV import completed.',
+      data: {
+        totalRows: parsed.rows.length,
+        createdCount,
+        updatedCount,
+        skippedCount,
+        errors,
+      },
+    };
+  }
+
+  async importAdminProductsCsv(file: UploadedCsvFile) {
+    this.ensureCsvFileExtension(file.originalname);
+
+    const parsed = parseCsvWithHeaders(file.buffer.toString('utf-8'));
+    if (parsed.headers.length === 0) {
+      throw new BadRequestException('CSV file is empty.');
+    }
+
+    const missingHeaders = isHeaderMissing(parsed.headers, ['name', 'slug']);
+    if (missingHeaders.length > 0) {
+      throw new BadRequestException(
+        `Missing required CSV headers: ${missingHeaders.join(', ')}`,
+      );
+    }
+
+    if (
+      !parsed.headers.includes('categoryId') &&
+      !parsed.headers.includes('categorySlug')
+    ) {
+      throw new BadRequestException(
+        "CSV must include at least one category reference column: 'categoryId' or 'categorySlug'.",
+      );
+    }
+
+    const errors: CsvImportError[] = [];
+    let createdCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+
+    const categoryIds = new Set<string>();
+    const categorySlugs = new Set<string>();
+    const productSlugs = new Set<string>();
+
+    for (const row of parsed.rows) {
+      const categoryId = (row.values.categoryId ?? '').trim();
+      const categorySlug = (row.values.categorySlug ?? '').trim();
+      const productSlug = (row.values.slug ?? '').trim();
+
+      if (categoryId) {
+        categoryIds.add(categoryId);
+      }
+      if (categorySlug) {
+        categorySlugs.add(categorySlug);
+      }
+      if (productSlug) {
+        productSlugs.add(productSlug);
+      }
+    }
+
+    const categoryWhereClauses: Prisma.CategoryWhereInput[] = [];
+    if (categoryIds.size > 0) {
+      categoryWhereClauses.push({ id: { in: Array.from(categoryIds) } });
+    }
+    if (categorySlugs.size > 0) {
+      categoryWhereClauses.push({ slug: { in: Array.from(categorySlugs) } });
+    }
+
+    const categories = await this.prisma.category.findMany({
+      where:
+        categoryWhereClauses.length > 0
+          ? {
+              OR: categoryWhereClauses,
+            }
+          : undefined,
+      select: {
+        id: true,
+        slug: true,
+      },
+    });
+
+    const categoryById = new Map(categories.map((category) => [category.id, category]));
+    const categoryBySlug = new Map(
+      categories.map((category) => [category.slug, category]),
+    );
+
+    const existingProducts = await this.prisma.product.findMany({
+      where: {
+        slug: {
+          in: Array.from(productSlugs),
+        },
+      },
+      select: {
+        id: true,
+        slug: true,
+      },
+    });
+    const productBySlug = new Map(
+      existingProducts.map((product) => [product.slug, product]),
+    );
+
+    for (const row of parsed.rows) {
+      if (this.isRowCompletelyEmpty(row)) {
+        skippedCount += 1;
+        continue;
+      }
+
+      try {
+        const name = (row.values.name ?? '').trim();
+        const slug = (row.values.slug ?? '').trim();
+        const description = this.parseOptionalTextCell(row.values.description);
+        const isActive = this.parseBooleanCell(row.values.isActive, 'isActive');
+        const categoryIdInput = (row.values.categoryId ?? '').trim();
+        const categorySlugInput = (row.values.categorySlug ?? '').trim();
+
+        if (!name) {
+          throw new Error("Field 'name' is required.");
+        }
+
+        if (!slug) {
+          throw new Error("Field 'slug' is required.");
+        }
+
+        if (!categoryIdInput && !categorySlugInput) {
+          throw new Error(
+            "One category reference is required: 'categoryId' or 'categorySlug'.",
+          );
+        }
+
+        const categoryFromId = categoryIdInput
+          ? categoryById.get(categoryIdInput)
+          : undefined;
+        const categoryFromSlug = categorySlugInput
+          ? categoryBySlug.get(categorySlugInput)
+          : undefined;
+
+        if (categoryIdInput && !categoryFromId) {
+          throw new Error(
+            `Category not found for categoryId='${categoryIdInput}'.`,
+          );
+        }
+
+        if (categorySlugInput && !categoryFromSlug) {
+          throw new Error(
+            `Category not found for categorySlug='${categorySlugInput}'.`,
+          );
+        }
+
+        if (
+          categoryFromId &&
+          categoryFromSlug &&
+          categoryFromId.id !== categoryFromSlug.id
+        ) {
+          throw new Error(
+            `categoryId='${categoryIdInput}' and categorySlug='${categorySlugInput}' reference different categories.`,
+          );
+        }
+
+        const resolvedCategoryId =
+          categoryFromId?.id ?? categoryFromSlug?.id ?? null;
+
+        if (!resolvedCategoryId) {
+          throw new Error('Unable to resolve category reference for this row.');
+        }
+
+        const existingProduct = productBySlug.get(slug);
+        if (!existingProduct) {
+          const created = await this.prisma.product.create({
+            data: {
+              name,
+              slug,
+              categoryId: resolvedCategoryId,
+              ...(description !== undefined ? { description } : {}),
+              ...(isActive !== undefined ? { isActive } : {}),
+            },
+            select: {
+              id: true,
+              slug: true,
+            },
+          });
+
+          productBySlug.set(created.slug, created);
+          createdCount += 1;
+          continue;
+        }
+
+        const updateData: Prisma.ProductUpdateInput = {
+          name,
+          category: { connect: { id: resolvedCategoryId } },
+          ...(description !== undefined ? { description } : {}),
+          ...(isActive !== undefined ? { isActive } : {}),
+        };
+
+        await this.prisma.product.update({
+          where: { id: existingProduct.id },
+          data: updateData,
+        });
+        updatedCount += 1;
+      } catch (error) {
+        skippedCount += 1;
+        errors.push({
+          row: row.rowNumber,
+          reason: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    }
+
+    return {
+      message: 'Products CSV import completed.',
+      data: {
+        totalRows: parsed.rows.length,
+        createdCount,
+        updatedCount,
+        skippedCount,
+        errors,
+      },
+    };
   }
 
   async findOneAdminCategory(id: string) {
