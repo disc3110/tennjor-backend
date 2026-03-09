@@ -95,7 +95,8 @@ export class CatalogController {
   @Post('admin/products/:productId/variants/bulk')
   createAdminBulkProductVariants(
     @Param('productId') productId: string,
-    @Body() createAdminBulkProductVariantsDto: CreateAdminBulkProductVariantsDto,
+    @Body()
+    createAdminBulkProductVariantsDto: CreateAdminBulkProductVariantsDto,
   ) {
     return this.catalogService.createAdminBulkProductVariants(
       productId,
@@ -140,7 +141,9 @@ export class CatalogController {
     @Param('productId') productId: string,
     @UploadedFile(
       new ParseFilePipeBuilder()
-        .addFileTypeValidator({ fileType: /^image\/(jpeg|jpg|png|webp|gif|avif)$/ })
+        .addFileTypeValidator({
+          fileType: /^image\/(jpeg|jpg|png|webp|gif|avif)$/,
+        })
         .addMaxSizeValidator({ maxSize: 8 * 1024 * 1024 })
         .build({
           errorHttpStatusCode: HttpStatus.BAD_REQUEST,
@@ -239,6 +242,48 @@ export class CatalogController {
     @Body() updateAdminCategoryDto: UpdateAdminCategoryDto,
   ) {
     return this.catalogService.updateAdminCategory(id, updateAdminCategoryDto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('admin/categories/:id/images/web/upload')
+  @UseInterceptors(FileInterceptor('file'))
+  uploadAdminCategoryWebImage(
+    @Param('id') id: string,
+    @UploadedFile(
+      new ParseFilePipeBuilder()
+        .addFileTypeValidator({
+          fileType: /^image\/(jpeg|jpg|png|webp|gif|avif)$/,
+        })
+        .addMaxSizeValidator({ maxSize: 8 * 1024 * 1024 })
+        .build({
+          errorHttpStatusCode: HttpStatus.BAD_REQUEST,
+          fileIsRequired: true,
+        }),
+    )
+    file: UploadedImageFile,
+  ) {
+    return this.catalogService.uploadAdminCategoryWebImage(id, file);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('admin/categories/:id/images/mobile/upload')
+  @UseInterceptors(FileInterceptor('file'))
+  uploadAdminCategoryMobileImage(
+    @Param('id') id: string,
+    @UploadedFile(
+      new ParseFilePipeBuilder()
+        .addFileTypeValidator({
+          fileType: /^image\/(jpeg|jpg|png|webp|gif|avif)$/,
+        })
+        .addMaxSizeValidator({ maxSize: 8 * 1024 * 1024 })
+        .build({
+          errorHttpStatusCode: HttpStatus.BAD_REQUEST,
+          fileIsRequired: true,
+        }),
+    )
+    file: UploadedImageFile,
+  ) {
+    return this.catalogService.uploadAdminCategoryMobileImage(id, file);
   }
 
   @UseGuards(JwtAuthGuard)

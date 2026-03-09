@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Category, Product } from '@prisma/client';
@@ -26,8 +27,17 @@ type UploadedImageFile = {
   originalname: string;
 };
 
+type CloudinaryCleanupResult = {
+  attempted: boolean;
+  result?: string;
+  error?: string;
+  skippedReason?: string;
+};
+
 @Injectable()
 export class CatalogService {
+  private readonly logger = new Logger(CatalogService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly cloudinaryService: CloudinaryService,
@@ -536,8 +546,12 @@ export class CatalogService {
       },
     });
 
-    const existingSizeSet = new Set(existingVariants.map((variant) => variant.size));
-    const skippedSizes = sizesToCreate.filter((size) => existingSizeSet.has(size));
+    const existingSizeSet = new Set(
+      existingVariants.map((variant) => variant.size),
+    );
+    const skippedSizes = sizesToCreate.filter((size) =>
+      existingSizeSet.has(size),
+    );
     const newSizes = sizesToCreate.filter((size) => !existingSizeSet.has(size));
 
     const createdVariants = await this.prisma.$transaction(
@@ -723,11 +737,9 @@ export class CatalogService {
       throw new NotFoundException('Product not found.');
     }
 
-    const productSlugFolderSegment = existingProduct.slug.replace(
-      /[^a-zA-Z0-9_-]/g,
-      '-',
+    const folder = this.cloudinaryService.buildProductFolder(
+      existingProduct.slug,
     );
-    const folder = `${this.cloudinaryService.getFolderRoot()}/products/${productSlugFolderSegment}`;
 
     const uploadedAsset = await this.cloudinaryService.uploadImage({
       fileBuffer: file.buffer,
@@ -834,7 +846,7 @@ export class CatalogService {
 
     if (existingImage.publicId) {
       try {
-        const destroyResult = await this.cloudinaryService.destroyImage(
+        const destroyResult = await this.cloudinaryService.deleteImage(
           existingImage.publicId,
         );
         cloudinaryCleanup = {
@@ -842,6 +854,10 @@ export class CatalogService {
           result: destroyResult.result,
         };
       } catch (error) {
+        this.logger.error(
+          `Cloudinary cleanup failed for publicId=${existingImage.publicId}`,
+          error instanceof Error ? error.stack : undefined,
+        );
         cloudinaryCleanup = {
           attempted: true,
           error: error instanceof Error ? error.message : 'Unknown error',
@@ -1211,7 +1227,129 @@ export class CatalogService {
     };
   }
 
-  // TODO(cloudinary-category): add backend-managed upload endpoints for category imageWebUrl/imageMobileUrl.
+  private async uploadAdminCategoryImage(
+    categoryId: string,
+    file: UploadedImageFile,
+    slot: 'web' | 'mobile',
+  ) {
+    const existingCategory = await this.prisma.category.findUnique({
+      where: { id: categoryId },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        isActive: true,
+        imageWebUrl: true,
+        imageMobileUrl: true,
+        imageWebPublicId: true,
+        imageMobilePublicId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    if (!existingCategory) {
+      throw new NotFoundException('Category not found.');
+    }
+
+    const folder = this.cloudinaryService.buildCategoryFolder(
+      existingCategory.slug,
+    );
+    const targetPublicId = this.cloudinaryService.buildCategoryAssetPublicId(
+      existingCategory.slug,
+      slot,
+    );
+
+    const uploadedAsset = await this.cloudinaryService.uploadImage({
+      fileBuffer: file.buffer,
+      filename: file.originalname,
+      folder,
+      publicId: targetPublicId,
+    });
+
+    const previousPublicId =
+      slot === 'web'
+        ? existingCategory.imageWebPublicId
+        : existingCategory.imageMobilePublicId;
+
+    const updatedCategory = await this.prisma.category.update({
+      where: { id: categoryId },
+      data:
+        slot === 'web'
+          ? {
+              imageWebUrl: uploadedAsset.secureUrl ?? uploadedAsset.url,
+              imageWebPublicId: uploadedAsset.publicId,
+            }
+          : {
+              imageMobileUrl: uploadedAsset.secureUrl ?? uploadedAsset.url,
+              imageMobilePublicId: uploadedAsset.publicId,
+            },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        isActive: true,
+        imageWebUrl: true,
+        imageMobileUrl: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    let previousAssetCleanup: CloudinaryCleanupResult = {
+      attempted: false,
+    };
+
+    if (previousPublicId && previousPublicId !== uploadedAsset.publicId) {
+      try {
+        const destroyResult =
+          await this.cloudinaryService.deleteImage(previousPublicId);
+        previousAssetCleanup = {
+          attempted: true,
+          result: destroyResult.result,
+        };
+      } catch (error) {
+        this.logger.error(
+          `Cloudinary cleanup failed for previous category ${slot} image publicId=${previousPublicId}`,
+          error instanceof Error ? error.stack : undefined,
+        );
+        previousAssetCleanup = {
+          attempted: true,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        };
+      }
+    } else if (previousPublicId && previousPublicId === uploadedAsset.publicId) {
+      previousAssetCleanup = {
+        attempted: false,
+        skippedReason: 'same_public_id_overwritten',
+      };
+    }
+
+    return {
+      message: `Category ${slot} image uploaded successfully.`,
+      data: {
+        category: updatedCategory,
+        uploadedAsset: {
+          url: uploadedAsset.url,
+          secureUrl: uploadedAsset.secureUrl,
+          publicId: uploadedAsset.publicId,
+        },
+        previousAssetCleanup,
+      },
+    };
+  }
+
+  async uploadAdminCategoryWebImage(categoryId: string, file: UploadedImageFile) {
+    return this.uploadAdminCategoryImage(categoryId, file, 'web');
+  }
+
+  async uploadAdminCategoryMobileImage(
+    categoryId: string,
+    file: UploadedImageFile,
+  ) {
+    return this.uploadAdminCategoryImage(categoryId, file, 'mobile');
+  }
+
   async createAdminCategory(createAdminCategoryDto: CreateAdminCategoryDto) {
     const existingCategory = await this.prisma.category.findUnique({
       where: { slug: createAdminCategoryDto.slug },
@@ -1262,6 +1400,10 @@ export class CatalogService {
       select: {
         id: true,
         slug: true,
+        imageWebUrl: true,
+        imageMobileUrl: true,
+        imageWebPublicId: true,
+        imageMobilePublicId: true,
       },
     });
 
@@ -1296,10 +1438,22 @@ export class CatalogService {
           ? { isActive: updateAdminCategoryDto.isActive }
           : {}),
         ...(updateAdminCategoryDto.imageWebUrl !== undefined
-          ? { imageWebUrl: updateAdminCategoryDto.imageWebUrl }
+          ? {
+              imageWebUrl: updateAdminCategoryDto.imageWebUrl,
+              ...(updateAdminCategoryDto.imageWebUrl !==
+              existingCategory.imageWebUrl
+                ? { imageWebPublicId: null }
+                : {}),
+            }
           : {}),
         ...(updateAdminCategoryDto.imageMobileUrl !== undefined
-          ? { imageMobileUrl: updateAdminCategoryDto.imageMobileUrl }
+          ? {
+              imageMobileUrl: updateAdminCategoryDto.imageMobileUrl,
+              ...(updateAdminCategoryDto.imageMobileUrl !==
+              existingCategory.imageMobileUrl
+                ? { imageMobilePublicId: null }
+                : {}),
+            }
           : {}),
       },
       select: {
@@ -1330,6 +1484,8 @@ export class CatalogService {
       where: { id },
       select: {
         id: true,
+        imageWebPublicId: true,
+        imageMobilePublicId: true,
         products: {
           select: {
             id: true,
@@ -1348,11 +1504,15 @@ export class CatalogService {
     }
 
     const productIds = existingCategory.products.map((product) => product.id);
-    const cloudinaryPublicIds = existingCategory.products.flatMap((product) =>
-      product.images
-        .map((image) => image.publicId)
+    const cloudinaryPublicIds = [
+      ...existingCategory.products.flatMap((product) =>
+        product.images
+          .map((image) => image.publicId)
+          .filter((publicId): publicId is string => Boolean(publicId)),
+      ),
+      ...[existingCategory.imageWebPublicId, existingCategory.imageMobilePublicId]
         .filter((publicId): publicId is string => Boolean(publicId)),
-    );
+    ];
 
     if (productIds.length > 0) {
       const quoteReferences = await this.prisma.quoteRequestItem.count({

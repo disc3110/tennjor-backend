@@ -1,11 +1,13 @@
-/* eslint-disable @typescript-eslint/no-base-to-string */
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
-import { createHash } from 'crypto';
+import { v2 as cloudinary } from 'cloudinary';
+import type { UploadApiErrorResponse, UploadApiResponse } from 'cloudinary';
+import { Readable } from 'stream';
 
 type CloudinaryUploadInput = {
   fileBuffer: Buffer;
   filename: string;
   folder: string;
+  publicId?: string;
 };
 
 type CloudinaryUploadResult = {
@@ -20,20 +22,25 @@ type CloudinaryDestroyResult = {
 
 @Injectable()
 export class CloudinaryService {
-  private readonly cloudName: string;
-  private readonly apiKey: string;
-  private readonly apiSecret: string;
   private readonly folderRoot: string;
+  private readonly productsFolder: string;
+  private readonly categoriesFolder: string;
 
   constructor() {
     const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
     const apiKey = process.env.CLOUDINARY_API_KEY;
     const apiSecret = process.env.CLOUDINARY_API_SECRET;
+    const folderRoot = process.env.CLOUDINARY_FOLDER_ROOT;
+    const productsFolder = process.env.CLOUDINARY_PRODUCTS_FOLDER;
+    const categoriesFolder = process.env.CLOUDINARY_CATEGORIES_FOLDER;
 
     const missing: string[] = [];
     if (!cloudName) missing.push('CLOUDINARY_CLOUD_NAME');
     if (!apiKey) missing.push('CLOUDINARY_API_KEY');
     if (!apiSecret) missing.push('CLOUDINARY_API_SECRET');
+    if (!folderRoot) missing.push('CLOUDINARY_FOLDER_ROOT');
+    if (!productsFolder) missing.push('CLOUDINARY_PRODUCTS_FOLDER');
+    if (!categoriesFolder) missing.push('CLOUDINARY_CATEGORIES_FOLDER');
 
     if (missing.length > 0) {
       throw new Error(
@@ -41,116 +48,126 @@ export class CloudinaryService {
       );
     }
 
-    this.cloudName = cloudName!;
-    this.apiKey = apiKey!;
-    this.apiSecret = apiSecret!;
-    this.folderRoot = process.env.CLOUDINARY_FOLDER_ROOT || 'tennjor';
+    cloudinary.config({
+      cloud_name: cloudName,
+      api_key: apiKey,
+      api_secret: apiSecret,
+      secure: true,
+    });
+
+    this.folderRoot = folderRoot!;
+    this.productsFolder = productsFolder!;
+    this.categoriesFolder = categoriesFolder!;
   }
 
-  getFolderRoot(): string {
-    return this.folderRoot;
+  buildProductFolder(productSlug: string): string {
+    return this.buildFolder(
+      this.folderRoot,
+      this.productsFolder,
+      this.sanitizeSegment(productSlug),
+    );
+  }
+
+  buildCategoryFolder(categorySlug: string): string {
+    return this.buildFolder(
+      this.folderRoot,
+      this.categoriesFolder,
+      this.sanitizeSegment(categorySlug),
+    );
+  }
+
+  buildCategoryAssetPublicId(
+    categorySlug: string,
+    assetName: 'web' | 'mobile',
+  ): string {
+    return this.buildFolder(this.buildCategoryFolder(categorySlug), assetName);
   }
 
   async uploadImage(
     input: CloudinaryUploadInput,
   ): Promise<CloudinaryUploadResult> {
-    const timestamp = Math.floor(Date.now() / 1000);
-    const paramsToSign = {
+    const uploadOptions: {
+      folder?: string;
+      resource_type: 'image';
+      use_filename?: boolean;
+      unique_filename?: boolean;
+      overwrite?: boolean;
+      invalidate?: boolean;
+      public_id?: string;
+    } = {
+      resource_type: 'image',
       folder: input.folder,
-      timestamp,
+      use_filename: true,
+      unique_filename: true,
     };
 
-    const signature = this.buildSignature(paramsToSign);
-    const formData = new FormData();
-    formData.append(
-      'file',
-      new Blob([new Uint8Array(input.fileBuffer)]),
-      input.filename,
-    );
-    formData.append('folder', input.folder);
-    formData.append('api_key', this.apiKey);
-    formData.append('timestamp', String(timestamp));
-    formData.append('signature', signature);
-
-    const response = await fetch(this.uploadUrl(), {
-      method: 'POST',
-      body: formData,
-    });
-
-    const payload = (await response.json()) as Record<string, unknown>;
-
-    if (!response.ok || payload.error) {
-      const errorMessage =
-        (payload.error as { message?: string } | undefined)?.message ||
-        'Cloudinary upload failed.';
-      throw new InternalServerErrorException(errorMessage);
+    if (input.publicId) {
+      uploadOptions.public_id = input.publicId;
+      uploadOptions.use_filename = false;
+      uploadOptions.unique_filename = false;
+      uploadOptions.overwrite = true;
+      uploadOptions.invalidate = true;
     }
 
-    return {
-      url: String(payload.url || ''),
-      secureUrl: payload.secure_url ? String(payload.secure_url) : null,
-      publicId: String(payload.public_id || ''),
-    };
-  }
+    const uploadResult = await new Promise<UploadApiResponse>(
+      (resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+          uploadOptions,
+          (error?: UploadApiErrorResponse, result?: UploadApiResponse) => {
+            if (error) {
+              reject(new Error(error.message));
+              return;
+            }
+            if (!result) {
+              reject(new Error('Cloudinary upload returned no result.'));
+              return;
+            }
+            resolve(result);
+          },
+        );
 
-  async destroyImage(publicId: string): Promise<CloudinaryDestroyResult> {
-    const timestamp = Math.floor(Date.now() / 1000);
-    const paramsToSign = {
-      invalidate: true,
-      public_id: publicId,
-      timestamp,
-    };
-
-    const signature = this.buildSignature(paramsToSign);
-    const body = new URLSearchParams({
-      public_id: publicId,
-      invalidate: 'true',
-      api_key: this.apiKey,
-      timestamp: String(timestamp),
-      signature,
-    });
-
-    const response = await fetch(this.destroyUrl(), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
+        Readable.from(input.fileBuffer).pipe(uploadStream);
       },
-      body,
+    ).catch((error: unknown) => {
+      const message =
+        error instanceof Error ? error.message : 'Cloudinary upload failed.';
+      throw new InternalServerErrorException(message);
     });
 
-    const payload = (await response.json()) as Record<string, unknown>;
-
-    if (!response.ok || payload.error) {
-      const errorMessage =
-        (payload.error as { message?: string } | undefined)?.message ||
-        'Cloudinary destroy failed.';
-      throw new InternalServerErrorException(errorMessage);
-    }
-
     return {
-      result: String(payload.result || 'unknown'),
+      url: uploadResult.url,
+      secureUrl: uploadResult.secure_url || null,
+      publicId: uploadResult.public_id,
     };
   }
 
-  private uploadUrl(): string {
-    return `https://api.cloudinary.com/v1_1/${this.cloudName}/image/upload`;
+  async deleteImage(publicId: string): Promise<CloudinaryDestroyResult> {
+    try {
+      const result = await cloudinary.uploader.destroy(publicId, {
+        resource_type: 'image',
+        invalidate: true,
+      });
+
+      return {
+        result:
+          result && typeof result.result === 'string'
+            ? result.result
+            : 'unknown',
+      };
+    } catch (error) {
+      throw new InternalServerErrorException(
+        error instanceof Error ? error.message : 'Cloudinary delete failed.',
+      );
+    }
   }
 
-  private destroyUrl(): string {
-    return `https://api.cloudinary.com/v1_1/${this.cloudName}/image/destroy`;
+  private buildFolder(...segments: string[]): string {
+    return segments
+      .map((segment) => segment.replace(/^\/+|\/+$/g, ''))
+      .join('/');
   }
 
-  private buildSignature(
-    params: Record<string, string | number | boolean>,
-  ): string {
-    const serialized = Object.entries(params)
-      .map(([key, value]) => [key, String(value)] as const)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, value]) => `${key}=${value}`)
-      .join('&');
-
-    return createHash('sha1')
-      .update(`${serialized}${this.apiSecret}`)
-      .digest('hex');
+  private sanitizeSegment(value: string): string {
+    return value.trim().replace(/[^a-zA-Z0-9_-]/g, '-');
   }
 }

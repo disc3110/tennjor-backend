@@ -38,9 +38,16 @@ Backend-managed media endpoints rely on Cloudinary server-side configuration:
 - `CLOUDINARY_CLOUD_NAME` (required)
 - `CLOUDINARY_API_KEY` (required)
 - `CLOUDINARY_API_SECRET` (required)
-- `CLOUDINARY_FOLDER_ROOT` (optional, default: `tennjor`)
+- `CLOUDINARY_FOLDER_ROOT` (required)
+- `CLOUDINARY_PRODUCTS_FOLDER` (required)
+- `CLOUDINARY_CATEGORIES_FOLDER` (required)
 
 If required vars are missing, backend startup fails with a clear configuration error.
+
+Folder strategy used by backend services:
+
+- Product images: `<CLOUDINARY_FOLDER_ROOT>/<CLOUDINARY_PRODUCTS_FOLDER>/<product-slug>/`
+- Category images: `<CLOUDINARY_FOLDER_ROOT>/<CLOUDINARY_CATEGORIES_FOLDER>/<category-slug>/`
 
 ## Authentication
 
@@ -117,6 +124,8 @@ Common validation constraints used:
 | GET    | `/admin/categories/:id`               | Yes           | No (JWT only) | Admin category detail                         |
 | POST   | `/admin/categories`                   | Yes           | No (JWT only) | Create category                               |
 | PATCH  | `/admin/categories/:id`               | Yes           | No (JWT only) | Update category                               |
+| POST   | `/admin/categories/:id/images/web/upload` | Yes      | No (JWT only) | Upload/replace category web image via backend Cloudinary |
+| POST   | `/admin/categories/:id/images/mobile/upload` | Yes   | No (JWT only) | Upload/replace category mobile image via backend Cloudinary |
 | DELETE | `/admin/categories/:id`               | Yes           | No (JWT only) | Delete category and nested catalog data       |
 | GET    | `/admin/quote-requests`               | Yes           | No (JWT only) | Admin quote requests list                     |
 | GET    | `/admin/quote-requests/:id`           | Yes           | No (JWT only) | Admin quote request detail                    |
@@ -1073,7 +1082,7 @@ curl -X POST http://localhost:3000/admin/products/prod_1/images \
   - Validates product existence.
   - Validates file type (`jpeg/jpg/png/webp/gif/avif`) and max file size (8MB).
   - Uploads to Cloudinary folder pattern:
-    - `<CLOUDINARY_FOLDER_ROOT>/products/<product-slug>/`
+    - `<CLOUDINARY_FOLDER_ROOT>/<CLOUDINARY_PRODUCTS_FOLDER>/<product-slug>/`
   - Stores `url`, `secureUrl`, `publicId`, `alt`, `order` in `ProductImage`.
 - Response body:
   - `{ message: "Product image uploaded successfully.", data: ProductImage }`
@@ -1418,6 +1427,140 @@ curl -X PATCH http://localhost:3000/admin/categories/cat_1 \
 }
 ```
 
+### POST `/admin/categories/:id/images/web/upload`
+
+- Purpose: Upload or replace the category web image through backend-managed Cloudinary integration.
+- Auth requirements: JWT required.
+- Params:
+  - `id: string` (category id)
+- Query: None.
+- Request body:
+  - `multipart/form-data`
+  - required file field: `file`
+  - file validation:
+    - allowed MIME types: `image/jpeg`, `image/jpg`, `image/png`, `image/webp`, `image/gif`, `image/avif`
+    - max size: `8MB`
+- Upload strategy:
+  - folder: `<CLOUDINARY_FOLDER_ROOT>/<CLOUDINARY_CATEGORIES_FOLDER>/<category-slug>/`
+  - deterministic public id: `<folder>/web`
+- Replacement behavior:
+  - backend uploads using deterministic public id for `web` slot
+  - category DB fields updated:
+    - `imageWebUrl`
+    - `imageWebPublicId`
+  - if previous `imageWebPublicId` exists and differs from new `publicId`, backend attempts Cloudinary delete for old asset
+  - cleanup failures are handled gracefully and reported in response (`previousAssetCleanup.error`), DB update remains successful
+- Response body:
+  - `{ message: "Category web image uploaded successfully.", data: { category, uploadedAsset, previousAssetCleanup } }`
+- Error cases:
+  - `400` missing file / invalid file type / file too large
+  - `401` auth
+  - `404` category not found
+  - `500` Cloudinary upload failure
+- Example request:
+
+```bash
+curl -X POST http://localhost:3000/admin/categories/cat_1/images/web/upload \
+  -H 'Authorization: Bearer <token>' \
+  -F 'file=@/path/to/category-web.jpg'
+```
+
+- Example response:
+
+```json
+{
+  "message": "Category web image uploaded successfully.",
+  "data": {
+    "category": {
+      "id": "cat_1",
+      "name": "Tênis",
+      "slug": "tenis",
+      "isActive": true,
+      "imageWebUrl": "https://res.cloudinary.com/demo/image/upload/v1/tennjor/categories/tenis/web.jpg",
+      "imageMobileUrl": "https://res.cloudinary.com/demo/image/upload/v1/tennjor/categories/tenis/mobile.jpg",
+      "createdAt": "...",
+      "updatedAt": "..."
+    },
+    "uploadedAsset": {
+      "url": "http://res.cloudinary.com/demo/image/upload/v1/tennjor/categories/tenis/web.jpg",
+      "secureUrl": "https://res.cloudinary.com/demo/image/upload/v1/tennjor/categories/tenis/web.jpg",
+      "publicId": "tennjor/categories/tenis/web"
+    },
+    "previousAssetCleanup": {
+      "attempted": false,
+      "skippedReason": "same_public_id_overwritten"
+    }
+  }
+}
+```
+
+### POST `/admin/categories/:id/images/mobile/upload`
+
+- Purpose: Upload or replace the category mobile image through backend-managed Cloudinary integration.
+- Auth requirements: JWT required.
+- Params:
+  - `id: string` (category id)
+- Query: None.
+- Request body:
+  - `multipart/form-data`
+  - required file field: `file`
+  - file validation:
+    - allowed MIME types: `image/jpeg`, `image/jpg`, `image/png`, `image/webp`, `image/gif`, `image/avif`
+    - max size: `8MB`
+- Upload strategy:
+  - folder: `<CLOUDINARY_FOLDER_ROOT>/<CLOUDINARY_CATEGORIES_FOLDER>/<category-slug>/`
+  - deterministic public id: `<folder>/mobile`
+- Replacement behavior:
+  - backend uploads using deterministic public id for `mobile` slot
+  - category DB fields updated:
+    - `imageMobileUrl`
+    - `imageMobilePublicId`
+  - if previous `imageMobilePublicId` exists and differs from new `publicId`, backend attempts Cloudinary delete for old asset
+  - cleanup failures are handled gracefully and reported in response (`previousAssetCleanup.error`), DB update remains successful
+- Response body:
+  - `{ message: "Category mobile image uploaded successfully.", data: { category, uploadedAsset, previousAssetCleanup } }`
+- Error cases:
+  - `400` missing file / invalid file type / file too large
+  - `401` auth
+  - `404` category not found
+  - `500` Cloudinary upload failure
+- Example request:
+
+```bash
+curl -X POST http://localhost:3000/admin/categories/cat_1/images/mobile/upload \
+  -H 'Authorization: Bearer <token>' \
+  -F 'file=@/path/to/category-mobile.jpg'
+```
+
+- Example response:
+
+```json
+{
+  "message": "Category mobile image uploaded successfully.",
+  "data": {
+    "category": {
+      "id": "cat_1",
+      "name": "Tênis",
+      "slug": "tenis",
+      "isActive": true,
+      "imageWebUrl": "https://res.cloudinary.com/demo/image/upload/v1/tennjor/categories/tenis/web.jpg",
+      "imageMobileUrl": "https://res.cloudinary.com/demo/image/upload/v1/tennjor/categories/tenis/mobile.jpg",
+      "createdAt": "...",
+      "updatedAt": "..."
+    },
+    "uploadedAsset": {
+      "url": "http://res.cloudinary.com/demo/image/upload/v1/tennjor/categories/tenis/mobile.jpg",
+      "secureUrl": "https://res.cloudinary.com/demo/image/upload/v1/tennjor/categories/tenis/mobile.jpg",
+      "publicId": "tennjor/categories/tenis/mobile"
+    },
+    "previousAssetCleanup": {
+      "attempted": false,
+      "skippedReason": "same_public_id_overwritten"
+    }
+  }
+}
+```
+
 ### DELETE `/admin/categories/:id`
 
 - Purpose: Delete category and nested catalog data (products, variants, images) in one transaction.
@@ -1618,7 +1761,9 @@ curl -X PATCH http://localhost:3000/admin/quote-requests/qr_1/status \
   - `isActive = true`
   - have at least one active product in DB filter, then additionally filtered in service to at least 3 active products.
 - Admin category list/detail includes `_count.products`.
-- Category images are URL fields on category model (`imageWebUrl`, `imageMobileUrl`), not separate image entity.
+- Category images are slot fields on category model, not separate image entity:
+  - public URL fields: `imageWebUrl`, `imageMobileUrl`
+  - Cloudinary tracking fields: `imageWebPublicId`, `imageMobilePublicId` (used for safe replacement/cleanup flows)
 
 ### Products
 
@@ -1680,6 +1825,8 @@ Suggested service function names:
 - `getAdminCategory(id)`
 - `createAdminCategory(payload)`
 - `updateAdminCategory(id, payload)`
+- `uploadAdminCategoryWebImage(id, file)`
+- `uploadAdminCategoryMobileImage(id, file)`
 - `getAdminQuoteRequests(query)`
 - `getAdminQuoteRequest(id)`
 - `updateAdminQuoteRequestStatus(id, payload)`
