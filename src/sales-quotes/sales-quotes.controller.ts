@@ -32,7 +32,10 @@ export class SalesQuotesController {
   constructor(private readonly salesQuotesService: SalesQuotesService) {}
 
   @Post()
-  create(@Req() req: AuthenticatedRequest, @Body() dto: CreateInternalSaleQuoteDto) {
+  create(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: CreateInternalSaleQuoteDto,
+  ) {
     return this.salesQuotesService.createQuote(req.user.id, dto);
   }
 
@@ -76,5 +79,10 @@ export class SalesQuotesController {
   @Post(':id/recalculate')
   recalculate(@Param('id') id: string) {
     return this.salesQuotesService.recalculateQuoteTotals(id);
+  }
+
+  @Post(':id/complete-sale')
+  completeSale(@Param('id') id: string) {
+    return this.salesQuotesService.completeSale(id);
   }
 }

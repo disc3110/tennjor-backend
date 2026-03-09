@@ -16,7 +16,7 @@ API domains covered:
 - Admin catalog management
 - Quote requests (public create + admin management)
 - Admin dashboard stats
-- Internal sales foundation (schema only in this step; no endpoints yet)
+- Internal sales quotes and completed sales (admin)
 - Utility endpoints (`/`, `/users`)
 
 Data store is PostgreSQL via Prisma.
@@ -46,15 +46,18 @@ Implemented in this step:
   - `CompletedSaleStatus`
   - `DiscountType`
 - Migration added for table creation, enums, indexes, and relations.
-- First working backend routes for internal sales quotes:
+- Working backend routes for internal sales quotes:
   - quote create/list/detail/update
   - quote item add/update/delete
   - quote totals recalculate
+  - quote completion into finalized sale
+- Working backend routes for completed sales read layer:
+  - list completed sales
+  - get completed sale detail
 
 Not implemented in this step:
 
-- Completed sale workflow endpoints/commands are not implemented yet.
-- No sale completion transaction endpoint in this step.
+- Reporting/export for completed sales is not implemented yet.
 
 Design notes:
 
@@ -64,8 +67,7 @@ Design notes:
 
 Planned next endpoints (future PR, not implemented now):
 
-- Complete quote into immutable completed sale
-- List/detail completed sales
+- Completed sales reporting/export endpoints
 
 ## Authentication
 
@@ -131,6 +133,9 @@ Common validation constraints used:
 | PATCH  | `/admin/sales-quotes/:id/items/:itemId` | Yes         | Yes           | Update internal sale quote item               |
 | DELETE | `/admin/sales-quotes/:id/items/:itemId` | Yes        | Yes           | Delete internal sale quote item               |
 | POST   | `/admin/sales-quotes/:id/recalculate` | Yes           | Yes           | Recalculate internal sale quote totals        |
+| POST   | `/admin/sales-quotes/:id/complete-sale` | Yes         | Yes           | Complete quote into finalized sale snapshot   |
+| GET    | `/admin/sales`                        | Yes           | Yes           | List completed sales                          |
+| GET    | `/admin/sales/:id`                    | Yes           | Yes           | Get completed sale detail                     |
 | GET    | `/admin/products`                     | Yes           | No (JWT only) | Admin product list                            |
 | GET    | `/admin/products/export/csv`          | Yes           | Yes           | Download products CSV                         |
 | GET    | `/admin/products/:id`                 | Yes           | No (JWT only) | Admin product detail                          |
@@ -666,6 +671,224 @@ quoteRequests,qr_1,Diego,diego@example.com,+1555123456,Vancouver,NEW,WEB_FORM,2,
   - recomputes quote header totals (`subtotal`, `totalRevenue`, `totalCost`, `totalProfit`, `marginPct`)
 - Response body:
   - `{ message: "Quote totals recalculated successfully.", data: QuoteTotals }`
+
+### POST `/admin/sales-quotes/:id/complete-sale`
+
+- Purpose: Convert an internal quote into a finalized `CompletedSale` snapshot.
+- Auth requirements: JWT + ADMIN role required.
+- Request body: none.
+- Transaction behavior:
+  - loads quote + items
+  - validates eligibility
+  - generates sale number (`S-<year>-<6-digit-seq>`)
+  - creates `CompletedSale`
+  - copies `InternalSaleQuoteItem` snapshots into `CompletedSaleItem`
+  - updates quote status to `COMPLETED` and sets `quote.completedAt`
+  - commits as a single DB transaction
+- Validation rules:
+  - quote must exist
+  - quote must have at least one item
+  - quote must not be already completed or already linked to a completed sale
+  - allowed completion source statuses: `DRAFT`, `SENT`, `APPROVED`
+  - quote snapshot monetary fields are copied as-is into sale (no live catalog recalculation)
+- Response body:
+  - `{ message: "Quote completed into sale successfully.", data: { sale, quote } }`
+  - `sale` includes: `id`, `saleNumber`, `status`, `subtotal`, `discountTotal`, `totalRevenue`, `totalCost`, `totalProfit`, `marginPct`, `completedAt`
+  - `quote` includes updated status and completion timestamp
+- Error cases:
+  - `400` invalid completion state / no items
+  - `404` quote not found
+- Example request:
+
+```bash
+curl -X POST http://localhost:3000/admin/sales-quotes/quote_id/complete-sale \
+  -H 'Authorization: Bearer <admin-token>'
+```
+
+- Example response:
+
+```json
+{
+  "message": "Quote completed into sale successfully.",
+  "data": {
+    "sale": {
+      "id": "sale_1",
+      "saleNumber": "S-2026-000001",
+      "status": "COMPLETED",
+      "subtotal": "14500.00",
+      "discountTotal": "500.00",
+      "totalRevenue": "14000.00",
+      "totalCost": "9100.00",
+      "totalProfit": "4900.00",
+      "marginPct": "35.0000",
+      "completedAt": "2026-03-09T10:00:00.000Z",
+      "createdAt": "2026-03-09T10:00:00.000Z"
+    },
+    "quote": {
+      "id": "quote_1",
+      "code": "SQ-2026-000001",
+      "status": "COMPLETED",
+      "completedAt": "2026-03-09T10:00:00.000Z",
+      "updatedAt": "2026-03-09T10:00:00.000Z"
+    }
+  }
+}
+```
+
+### GET `/admin/sales`
+
+- Purpose: List completed sales with pagination, filters, and sorting.
+- Auth requirements: JWT + ADMIN role required.
+- Query:
+  - `page?` (`>= 1`, default `1`)
+  - `limit?` (`>= 1`, default `10`)
+  - `status?` (`COMPLETED|CANCELLED|REFUNDED`)
+  - `customerName?` (contains, case-insensitive)
+  - `saleNumber?` (contains, case-insensitive)
+  - `dateFrom?` (ISO date string)
+  - `dateTo?` (ISO date string)
+  - `sortBy?` (`completedAt|createdAt|totalRevenue|totalProfit`, default `completedAt`)
+  - `sortOrder?` (`asc|desc`, default `desc`)
+- Behavior:
+  - reads from `CompletedSale` only
+  - validates `dateFrom <= dateTo`
+- Response body:
+  - `{ data: CompletedSaleSummary[], meta: { total, page, limit, totalPages } }`
+  - summary row fields:
+    - `id`, `saleNumber`, `status`
+    - `customerName`, `customerPhone`, `customerEmail`
+    - `currency`, `totalRevenue`, `totalCost`, `totalProfit`, `marginPct`
+    - `completedAt`, `createdAt`, `quoteId`
+- Error cases:
+  - `400` invalid pagination/filter/sort params or invalid date range
+  - `401` missing/invalid token
+  - `403` authenticated but non-admin user
+- Example request:
+
+```bash
+curl -X GET 'http://localhost:3000/admin/sales?page=1&limit=10&status=COMPLETED&sortBy=completedAt&sortOrder=desc' \
+  -H 'Authorization: Bearer <admin-token>'
+```
+
+- Example response:
+
+```json
+{
+  "data": [
+    {
+      "id": "sale_1",
+      "saleNumber": "S-2026-000001",
+      "status": "COMPLETED",
+      "customerName": "Zapaterias del Norte",
+      "customerPhone": "+525512345678",
+      "customerEmail": "compras@zapnorte.mx",
+      "currency": "MXN",
+      "totalRevenue": "14000.00",
+      "totalCost": "9100.00",
+      "totalProfit": "4900.00",
+      "marginPct": "35.0000",
+      "completedAt": "2026-03-09T10:00:00.000Z",
+      "createdAt": "2026-03-09T10:00:00.000Z",
+      "quoteId": "quote_1"
+    }
+  ],
+  "meta": {
+    "total": 1,
+    "page": 1,
+    "limit": 10,
+    "totalPages": 1
+  }
+}
+```
+
+### GET `/admin/sales/:id`
+
+- Purpose: Get completed sale detail with item snapshots.
+- Auth requirements: JWT + ADMIN role required.
+- Params:
+  - `id` (completed sale id)
+- Response body:
+  - `{ data: CompletedSaleDetail }` with:
+    - sale header totals/customer/notes/status/timestamps
+    - optional `quote` summary (`id`, `code`, `status`, `createdAt`)
+    - `createdBy` summary (`id`, `name`, `email`, `role`)
+    - `items[]` snapshot lines with:
+      - `id`, `productId`, `variantId`
+      - `productNameSnapshot`, `productSlugSnapshot`
+      - `sizeSnapshot`, `colorSnapshot`, `skuSnapshot`
+      - `quantity`, `unitSalePrice`, `unitCostSnapshot`
+      - `lineRevenue`, `lineCost`, `lineProfit`
+      - `discountType`, `discountValue`, `createdAt`
+- Error cases:
+  - `404` completed sale not found
+  - `401` missing/invalid token
+  - `403` authenticated but non-admin user
+- Example request:
+
+```bash
+curl -X GET http://localhost:3000/admin/sales/sale_1 \
+  -H 'Authorization: Bearer <admin-token>'
+```
+
+- Example response:
+
+```json
+{
+  "data": {
+    "id": "sale_1",
+    "saleNumber": "S-2026-000001",
+    "status": "COMPLETED",
+    "customerName": "Zapaterias del Norte",
+    "customerPhone": "+525512345678",
+    "customerEmail": "compras@zapnorte.mx",
+    "customerCity": "Monterrey",
+    "currency": "MXN",
+    "subtotal": "14500.00",
+    "discountTotal": "500.00",
+    "totalRevenue": "14000.00",
+    "totalCost": "9100.00",
+    "totalProfit": "4900.00",
+    "marginPct": "35.0000",
+    "notes": "Entrega parcial en 72h",
+    "completedAt": "2026-03-09T10:00:00.000Z",
+    "createdAt": "2026-03-09T10:00:00.000Z",
+    "updatedAt": "2026-03-09T10:00:00.000Z",
+    "quote": {
+      "id": "quote_1",
+      "code": "SQ-2026-000001",
+      "status": "COMPLETED",
+      "createdAt": "2026-03-09T09:20:00.000Z"
+    },
+    "createdBy": {
+      "id": "user_admin",
+      "name": "Admin",
+      "email": "admin@tennjor.com",
+      "role": "ADMIN"
+    },
+    "items": [
+      {
+        "id": "sale_item_1",
+        "productId": "prod_1",
+        "variantId": "var_1",
+        "productNameSnapshot": "Tenis Alpha",
+        "productSlugSnapshot": "tenis-alpha",
+        "sizeSnapshot": "26",
+        "colorSnapshot": "Negro",
+        "skuSnapshot": "ALPHA-26-BLK",
+        "quantity": 20,
+        "unitSalePrice": "700.00",
+        "unitCostSnapshot": "455.00",
+        "lineRevenue": "14000.00",
+        "lineCost": "9100.00",
+        "lineProfit": "4900.00",
+        "discountType": null,
+        "discountValue": null,
+        "createdAt": "2026-03-09T10:00:00.000Z"
+      }
+    ]
+  }
+}
+```
 
 ### GET `/admin/products`
 
@@ -1784,6 +2007,9 @@ Suggested service function names:
 - `updateInternalSaleQuoteItem(id, itemId, payload)`
 - `deleteInternalSaleQuoteItem(id, itemId)`
 - `recalculateInternalSaleQuote(id)`
+- `completeInternalSaleQuote(id)`
+- `getAdminSales(query)`
+- `getAdminSale(id)`
 
 Important fields for UI rendering:
 
@@ -1796,6 +2022,9 @@ Important fields for UI rendering:
   - Quote item snapshot fields for immutable historical labels.
 - Admin tables:
   - Use `meta.total`, `meta.page`, `meta.limit`, `meta.totalPages` when present.
+- Completed sales:
+  - Header: `saleNumber`, `status`, `customerName`, `currency`, `totalRevenue`, `totalProfit`, `completedAt`
+  - Items: snapshot fields (`productNameSnapshot`, `sizeSnapshot`, `colorSnapshot`, `skuSnapshot`) plus line totals.
 
 Known pitfalls:
 

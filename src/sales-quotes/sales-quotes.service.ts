@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  CompletedSaleStatus,
   DiscountType,
   InternalSaleQuoteStatus,
   Prisma,
@@ -14,6 +15,7 @@ import { FindInternalSaleQuotesDto } from './dto/find-internal-sale-quotes.dto';
 import { UpdateInternalSaleQuoteDto } from './dto/update-internal-sale-quote.dto';
 import { CreateInternalSaleQuoteItemDto } from './dto/create-internal-sale-quote-item.dto';
 import { UpdateInternalSaleQuoteItemDto } from './dto/update-internal-sale-quote-item.dto';
+import { FindCompletedSalesDto } from './dto/find-completed-sales.dto';
 
 @Injectable()
 export class SalesQuotesService {
@@ -39,7 +41,11 @@ export class SalesQuotesService {
     discountType?: DiscountType | null;
     discountValue?: Prisma.Decimal | number | null;
   }): number {
-    if (!input.discountType || input.discountValue === null || input.discountValue === undefined) {
+    if (
+      !input.discountType ||
+      input.discountValue === null ||
+      input.discountValue === undefined
+    ) {
       return 0;
     }
 
@@ -86,13 +92,20 @@ export class SalesQuotesService {
     discountType?: DiscountType | null;
     discountValue?: number | null;
   }) {
-    if (input.discountType && (input.discountValue === null || input.discountValue === undefined)) {
+    if (
+      input.discountType &&
+      (input.discountValue === null || input.discountValue === undefined)
+    ) {
       throw new BadRequestException(
         'discountValue is required when discountType is provided.',
       );
     }
 
-    if (!input.discountType && input.discountValue !== null && input.discountValue !== undefined) {
+    if (
+      !input.discountType &&
+      input.discountValue !== null &&
+      input.discountValue !== undefined
+    ) {
       throw new BadRequestException(
         'discountType is required when discountValue is provided.',
       );
@@ -115,6 +128,41 @@ export class SalesQuotesService {
       : 1;
 
     return `${prefix}${String(nextNumber).padStart(6, '0')}`;
+  }
+
+  private async generateNextSaleNumber(
+    tx: Prisma.TransactionClient,
+  ): Promise<string> {
+    const year = new Date().getFullYear();
+    const prefix = `S-${year}-`;
+    const latest = await tx.completedSale.findFirst({
+      where: { saleNumber: { startsWith: prefix } },
+      orderBy: { saleNumber: 'desc' },
+      select: { saleNumber: true },
+    });
+
+    const nextNumber = latest
+      ? Number(latest.saleNumber.slice(prefix.length)) + 1
+      : 1;
+
+    return `${prefix}${String(nextNumber).padStart(6, '0')}`;
+  }
+
+  private isUniqueConstraintOnField(
+    error: unknown,
+    fieldName: string,
+  ): boolean {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+      return false;
+    }
+    if (error.code !== 'P2002') {
+      return false;
+    }
+    const target = error.meta?.target;
+    if (!Array.isArray(target)) {
+      return false;
+    }
+    return target.includes(fieldName);
   }
 
   private async recalculateQuoteTotalsWithTx(
@@ -173,7 +221,8 @@ export class SalesQuotesService {
     const quoteLevelDiscount = this.toNumber(quote.discountTotal);
     const totalRevenue = Math.max(0, itemsRevenueTotal - quoteLevelDiscount);
     const totalProfit = totalRevenue - totalCost;
-    const marginPct = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : null;
+    const marginPct =
+      totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : null;
 
     await tx.internalSaleQuote.update({
       where: { id: quoteId },
@@ -227,31 +276,29 @@ export class SalesQuotesService {
       }
     }
 
-    let createdQuote:
-      | {
-          id: string;
-          code: string;
-          status: InternalSaleQuoteStatus;
-          customerName: string;
-          customerPhone: string | null;
-          customerEmail: string | null;
-          customerCity: string | null;
-          notes: string | null;
-          currency: string;
-          subtotal: Prisma.Decimal;
-          discountTotal: Prisma.Decimal;
-          totalRevenue: Prisma.Decimal;
-          totalCost: Prisma.Decimal;
-          totalProfit: Prisma.Decimal;
-          marginPct: Prisma.Decimal | null;
-          publicQuoteRequestId: string | null;
-          createdByUserId: string;
-          approvedAt: Date | null;
-          completedAt: Date | null;
-          createdAt: Date;
-          updatedAt: Date;
-        }
-      | null = null;
+    let createdQuote: {
+      id: string;
+      code: string;
+      status: InternalSaleQuoteStatus;
+      customerName: string;
+      customerPhone: string | null;
+      customerEmail: string | null;
+      customerCity: string | null;
+      notes: string | null;
+      currency: string;
+      subtotal: Prisma.Decimal;
+      discountTotal: Prisma.Decimal;
+      totalRevenue: Prisma.Decimal;
+      totalCost: Prisma.Decimal;
+      totalProfit: Prisma.Decimal;
+      marginPct: Prisma.Decimal | null;
+      publicQuoteRequestId: string | null;
+      createdByUserId: string;
+      approvedAt: Date | null;
+      completedAt: Date | null;
+      createdAt: Date;
+      updatedAt: Date;
+    } | null = null;
 
     for (let attempt = 0; attempt < 4; attempt += 1) {
       try {
@@ -447,13 +494,23 @@ export class SalesQuotesService {
     await this.prisma.internalSaleQuote.update({
       where: { id },
       data: {
-        ...(dto.customerName !== undefined ? { customerName: dto.customerName } : {}),
-        ...(dto.customerPhone !== undefined ? { customerPhone: dto.customerPhone } : {}),
-        ...(dto.customerEmail !== undefined ? { customerEmail: dto.customerEmail } : {}),
-        ...(dto.customerCity !== undefined ? { customerCity: dto.customerCity } : {}),
+        ...(dto.customerName !== undefined
+          ? { customerName: dto.customerName }
+          : {}),
+        ...(dto.customerPhone !== undefined
+          ? { customerPhone: dto.customerPhone }
+          : {}),
+        ...(dto.customerEmail !== undefined
+          ? { customerEmail: dto.customerEmail }
+          : {}),
+        ...(dto.customerCity !== undefined
+          ? { customerCity: dto.customerCity }
+          : {}),
         ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
         ...(dto.currency !== undefined ? { currency: dto.currency } : {}),
-        ...(dto.discountTotal !== undefined ? { discountTotal: dto.discountTotal } : {}),
+        ...(dto.discountTotal !== undefined
+          ? { discountTotal: dto.discountTotal }
+          : {}),
       },
     });
 
@@ -490,15 +547,13 @@ export class SalesQuotesService {
       throw new BadRequestException('Product not found.');
     }
 
-    let variant:
-      | {
-          id: string;
-          size: string;
-          color: string;
-          sku: string | null;
-          productId: string;
-        }
-      | null = null;
+    let variant: {
+      id: string;
+      size: string;
+      color: string;
+      sku: string | null;
+      productId: string;
+    } | null = null;
 
     if (dto.variantId) {
       variant = await this.prisma.productVariant.findUnique({
@@ -516,7 +571,9 @@ export class SalesQuotesService {
         throw new BadRequestException('Variant not found.');
       }
       if (variant.productId !== product.id) {
-        throw new BadRequestException('Variant does not belong to the selected product.');
+        throw new BadRequestException(
+          'Variant does not belong to the selected product.',
+        );
       }
     }
 
@@ -597,7 +654,8 @@ export class SalesQuotesService {
     this.assertEditableStatus(item.quote.status);
 
     const quantity = dto.quantity ?? item.quantity;
-    const unitSalePrice = dto.unitSalePrice ?? this.toNumber(item.unitSalePrice);
+    const unitSalePrice =
+      dto.unitSalePrice ?? this.toNumber(item.unitSalePrice);
     const unitCostSnapshot =
       dto.unitCostSnapshot ?? this.toNumber(item.unitCostSnapshot);
     const discountType = dto.discountType ?? item.discountType;
@@ -631,7 +689,9 @@ export class SalesQuotesService {
         ...(dto.unitCostSnapshot !== undefined
           ? { unitCostSnapshot: dto.unitCostSnapshot }
           : {}),
-        ...(dto.discountType !== undefined ? { discountType: dto.discountType } : {}),
+        ...(dto.discountType !== undefined
+          ? { discountType: dto.discountType }
+          : {}),
         ...(dto.discountValue !== undefined
           ? { discountValue: dto.discountValue }
           : {}),
@@ -685,6 +745,364 @@ export class SalesQuotesService {
         id: itemId,
         quoteTotals: totals.data,
       },
+    };
+  }
+
+  async completeSale(quoteId: string) {
+    let result: {
+      sale: {
+        id: string;
+        saleNumber: string;
+        status: CompletedSaleStatus;
+        subtotal: Prisma.Decimal;
+        discountTotal: Prisma.Decimal;
+        totalRevenue: Prisma.Decimal;
+        totalCost: Prisma.Decimal;
+        totalProfit: Prisma.Decimal;
+        marginPct: Prisma.Decimal | null;
+        completedAt: Date;
+        createdAt: Date;
+      };
+      quote: {
+        id: string;
+        code: string;
+        status: InternalSaleQuoteStatus;
+        completedAt: Date | null;
+        updatedAt: Date;
+      };
+    } | null = null;
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        result = await this.prisma.$transaction(async (tx) => {
+          const quote = await tx.internalSaleQuote.findUnique({
+            where: { id: quoteId },
+            select: {
+              id: true,
+              code: true,
+              status: true,
+              customerName: true,
+              customerPhone: true,
+              customerEmail: true,
+              customerCity: true,
+              notes: true,
+              currency: true,
+              subtotal: true,
+              discountTotal: true,
+              totalRevenue: true,
+              totalCost: true,
+              totalProfit: true,
+              marginPct: true,
+              createdByUserId: true,
+              completedAt: true,
+              completedSale: {
+                select: { id: true },
+              },
+              items: {
+                orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+                select: {
+                  productId: true,
+                  variantId: true,
+                  productNameSnapshot: true,
+                  productSlugSnapshot: true,
+                  sizeSnapshot: true,
+                  colorSnapshot: true,
+                  skuSnapshot: true,
+                  quantity: true,
+                  unitSalePrice: true,
+                  unitCostSnapshot: true,
+                  lineRevenue: true,
+                  lineCost: true,
+                  lineProfit: true,
+                  discountType: true,
+                  discountValue: true,
+                },
+              },
+            },
+          });
+
+          if (!quote) {
+            throw new NotFoundException('Internal sale quote not found.');
+          }
+
+          if (quote.completedSale?.id) {
+            throw new BadRequestException(
+              'Quote already linked to a completed sale.',
+            );
+          }
+
+          if (quote.status === InternalSaleQuoteStatus.COMPLETED) {
+            throw new BadRequestException('Quote is already completed.');
+          }
+
+          const allowedCompletionStatuses = new Set<InternalSaleQuoteStatus>([
+            InternalSaleQuoteStatus.DRAFT,
+            InternalSaleQuoteStatus.SENT,
+            InternalSaleQuoteStatus.APPROVED,
+          ]);
+          if (!allowedCompletionStatuses.has(quote.status)) {
+            throw new BadRequestException(
+              'Quote status is not eligible for completion. Allowed statuses: DRAFT, SENT, APPROVED.',
+            );
+          }
+
+          if (quote.items.length === 0) {
+            throw new BadRequestException(
+              'Cannot complete quote without at least one item.',
+            );
+          }
+
+          const saleNumber = await this.generateNextSaleNumber(tx);
+          const completedAt = new Date();
+
+          const sale = await tx.completedSale.create({
+            data: {
+              saleNumber,
+              quoteId: quote.id,
+              status: CompletedSaleStatus.COMPLETED,
+              customerName: quote.customerName,
+              customerPhone: quote.customerPhone,
+              customerEmail: quote.customerEmail,
+              customerCity: quote.customerCity,
+              currency: quote.currency,
+              subtotal: quote.subtotal,
+              discountTotal: quote.discountTotal,
+              totalRevenue: quote.totalRevenue,
+              totalCost: quote.totalCost,
+              totalProfit: quote.totalProfit,
+              marginPct: quote.marginPct,
+              notes: quote.notes,
+              createdByUserId: quote.createdByUserId,
+              completedAt,
+              items: {
+                create: quote.items.map((item) => ({
+                  productId: item.productId,
+                  variantId: item.variantId,
+                  productNameSnapshot: item.productNameSnapshot,
+                  productSlugSnapshot: item.productSlugSnapshot,
+                  sizeSnapshot: item.sizeSnapshot,
+                  colorSnapshot: item.colorSnapshot,
+                  skuSnapshot: item.skuSnapshot,
+                  quantity: item.quantity,
+                  unitSalePrice: item.unitSalePrice,
+                  unitCostSnapshot: item.unitCostSnapshot,
+                  lineRevenue: item.lineRevenue,
+                  lineCost: item.lineCost,
+                  lineProfit: item.lineProfit,
+                  discountType: item.discountType,
+                  discountValue: item.discountValue,
+                })),
+              },
+            },
+            select: {
+              id: true,
+              saleNumber: true,
+              status: true,
+              subtotal: true,
+              discountTotal: true,
+              totalRevenue: true,
+              totalCost: true,
+              totalProfit: true,
+              marginPct: true,
+              completedAt: true,
+              createdAt: true,
+            },
+          });
+
+          const updatedQuote = await tx.internalSaleQuote.update({
+            where: { id: quote.id },
+            data: {
+              status: InternalSaleQuoteStatus.COMPLETED,
+              completedAt,
+            },
+            select: {
+              id: true,
+              code: true,
+              status: true,
+              completedAt: true,
+              updatedAt: true,
+            },
+          });
+
+          return {
+            sale,
+            quote: updatedQuote,
+          };
+        });
+
+        break;
+      } catch (error: unknown) {
+        const isSaleNumberConflict = this.isUniqueConstraintOnField(
+          error,
+          'saleNumber',
+        );
+        if (isSaleNumberConflict && attempt < 3) {
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    return {
+      message: 'Quote completed into sale successfully.',
+      data: result,
+    };
+  }
+
+  async findAllCompletedSales(query: FindCompletedSalesDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+    const skip = (page - 1) * limit;
+
+    if (query.dateFrom && query.dateTo) {
+      const from = new Date(query.dateFrom);
+      const to = new Date(query.dateTo);
+      if (from > to) {
+        throw new BadRequestException(
+          'dateFrom cannot be greater than dateTo.',
+        );
+      }
+    }
+
+    const where: Prisma.CompletedSaleWhereInput = {
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.customerName
+        ? {
+            customerName: {
+              contains: query.customerName,
+              mode: 'insensitive',
+            },
+          }
+        : {}),
+      ...(query.saleNumber
+        ? {
+            saleNumber: {
+              contains: query.saleNumber,
+              mode: 'insensitive',
+            },
+          }
+        : {}),
+      ...(query.dateFrom || query.dateTo
+        ? {
+            completedAt: {
+              ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
+              ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
+            },
+          }
+        : {}),
+    };
+
+    const sortBy = query.sortBy ?? 'completedAt';
+    const sortOrder = query.sortOrder ?? 'desc';
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.completedSale.findMany({
+        where,
+        orderBy: {
+          [sortBy]: sortOrder,
+        },
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          saleNumber: true,
+          status: true,
+          customerName: true,
+          customerPhone: true,
+          customerEmail: true,
+          currency: true,
+          totalRevenue: true,
+          totalCost: true,
+          totalProfit: true,
+          marginPct: true,
+          completedAt: true,
+          createdAt: true,
+          quoteId: true,
+        },
+      }),
+      this.prisma.completedSale.count({ where }),
+    ]);
+
+    return {
+      data: items,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async findOneCompletedSale(id: string) {
+    const sale = await this.prisma.completedSale.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        saleNumber: true,
+        status: true,
+        customerName: true,
+        customerPhone: true,
+        customerEmail: true,
+        customerCity: true,
+        currency: true,
+        subtotal: true,
+        discountTotal: true,
+        totalRevenue: true,
+        totalCost: true,
+        totalProfit: true,
+        marginPct: true,
+        notes: true,
+        completedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        quote: {
+          select: {
+            id: true,
+            code: true,
+            status: true,
+            createdAt: true,
+          },
+        },
+        createdBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+          },
+        },
+        items: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            id: true,
+            productId: true,
+            variantId: true,
+            productNameSnapshot: true,
+            productSlugSnapshot: true,
+            sizeSnapshot: true,
+            colorSnapshot: true,
+            skuSnapshot: true,
+            quantity: true,
+            unitSalePrice: true,
+            unitCostSnapshot: true,
+            lineRevenue: true,
+            lineCost: true,
+            lineProfit: true,
+            discountType: true,
+            discountValue: true,
+            createdAt: true,
+          },
+        },
+      },
+    });
+
+    if (!sale) {
+      throw new NotFoundException('Completed sale not found.');
+    }
+
+    return {
+      data: sale,
     };
   }
 }
