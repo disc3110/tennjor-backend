@@ -16,9 +16,7 @@ describe('csv.util', () => {
       ],
     );
 
-    expect(csv).toBe(
-      'id,name,active\n1,Product A,true\n2,Product B,false',
-    );
+    expect(csv).toBe('id,name,active\n1,Product A,true\n2,Product B,false');
   });
 
   it('creates individual row text', () => {

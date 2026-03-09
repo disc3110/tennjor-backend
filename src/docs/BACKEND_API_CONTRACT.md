@@ -22,13 +22,32 @@ Data store is PostgreSQL via Prisma.
 
 - Base URL: `http://localhost:3000` by default in local dev (from `main.ts` listening on `process.env.PORT ?? 3000`).
 - No global prefix (routes are mounted exactly as defined in controllers).
-- Content type: `application/json`.
+- Content type: `application/json` for most endpoints.
+- Multipart uploads: `multipart/form-data` for file upload endpoints.
 - Authenticated endpoints require:
   - `Authorization: Bearer <accessToken>`
 
 CORS:
 
 - CORS is enabled with `origin: true` and `credentials: true`.
+
+## Media Configuration (Cloudinary)
+
+Backend-managed media endpoints rely on Cloudinary server-side configuration:
+
+- `CLOUDINARY_CLOUD_NAME` (required)
+- `CLOUDINARY_API_KEY` (required)
+- `CLOUDINARY_API_SECRET` (required)
+- `CLOUDINARY_FOLDER_ROOT` (required)
+- `CLOUDINARY_PRODUCTS_FOLDER` (required)
+- `CLOUDINARY_CATEGORIES_FOLDER` (required)
+
+If required vars are missing, backend startup fails with a clear configuration error.
+
+Folder strategy used by backend services:
+
+- Product images: `<CLOUDINARY_FOLDER_ROOT>/<CLOUDINARY_PRODUCTS_FOLDER>/<product-slug>/`
+- Category images: `<CLOUDINARY_FOLDER_ROOT>/<CLOUDINARY_CATEGORIES_FOLDER>/<category-slug>/`
 
 ## Authentication
 
@@ -87,6 +106,7 @@ Common validation constraints used:
 | GET    | `/admin/dashboard/stats`              | Yes           | No (JWT only) | Dashboard KPIs                                |
 | GET    | `/admin/dashboard/stats/export/csv`   | Yes           | Yes           | Download dashboard stats + quote requests CSV |
 | GET    | `/admin/products`                     | Yes           | No (JWT only) | Admin product list                            |
+| POST   | `/admin/products/import/csv`         | Yes           | No (JWT only) | Bulk import products from CSV (create/update by slug) |
 | GET    | `/admin/products/export/csv`          | Yes           | Yes           | Download products CSV                         |
 | GET    | `/admin/products/:id`                 | Yes           | No (JWT only) | Admin product detail                          |
 | POST   | `/admin/products`                     | Yes           | No (JWT only) | Create product                                |
@@ -97,13 +117,17 @@ Common validation constraints used:
 | PATCH  | `/admin/variants/:id`                 | Yes           | No (JWT only) | Update product variant                        |
 | DELETE | `/admin/variants/:id`                 | Yes           | No (JWT only) | Delete product variant                        |
 | POST   | `/admin/products/:productId/images`   | Yes           | No (JWT only) | Create product image                          |
+| POST   | `/admin/products/:productId/images/upload` | Yes      | No (JWT only) | Upload product image file via backend Cloudinary |
 | PATCH  | `/admin/product-images/:id`           | Yes           | No (JWT only) | Update product image                          |
 | DELETE | `/admin/product-images/:id`           | Yes           | No (JWT only) | Delete product image                          |
 | GET    | `/admin/categories`                   | Yes           | No (JWT only) | Admin category list                           |
+| POST   | `/admin/categories/import/csv`       | Yes           | No (JWT only) | Bulk import categories from CSV (create/update by slug) |
 | GET    | `/admin/categories/export/csv`        | Yes           | Yes           | Download categories CSV                       |
 | GET    | `/admin/categories/:id`               | Yes           | No (JWT only) | Admin category detail                         |
 | POST   | `/admin/categories`                   | Yes           | No (JWT only) | Create category                               |
 | PATCH  | `/admin/categories/:id`               | Yes           | No (JWT only) | Update category                               |
+| POST   | `/admin/categories/:id/images/web/upload` | Yes      | No (JWT only) | Upload/replace category web image via backend Cloudinary |
+| POST   | `/admin/categories/:id/images/mobile/upload` | Yes   | No (JWT only) | Upload/replace category mobile image via backend Cloudinary |
 | DELETE | `/admin/categories/:id`               | Yes           | No (JWT only) | Delete category and nested catalog data       |
 | GET    | `/admin/quote-requests`               | Yes           | No (JWT only) | Admin quote requests list                     |
 | GET    | `/admin/quote-requests/:id`           | Yes           | No (JWT only) | Admin quote request detail                    |
@@ -580,6 +604,63 @@ curl -X GET 'http://localhost:3000/admin/products?page=1&limit=10&isActive=true'
 }
 ```
 
+### POST `/admin/products/import/csv`
+
+- Purpose: Bulk import products for admin catalog management.
+- Auth requirements: JWT required.
+- Params: None.
+- Query: None.
+- Request body:
+  - `multipart/form-data`
+  - required file field: `file`
+  - accepted file types: `text/csv`, `application/vnd.ms-excel`, `text/plain`
+  - max file size: `5MB`
+  - filename must end with `.csv`
+- Expected CSV columns:
+  - required: `name`, `slug`
+  - category reference: at least one of `categorySlug` or `categoryId`
+  - optional: `description`, `isActive`
+- Import behavior:
+  - create product when slug does not exist
+  - update product when slug already exists
+  - category references are resolved safely from existing categories only
+  - categories are **not auto-created** from product import
+  - row failures do not fail the whole import (partial success)
+- Response body:
+  - `{ message, data: { totalRows, createdCount, updatedCount, skippedCount, errors[] } }`
+  - `errors[]` entries include `{ row, reason }`
+- Error cases:
+  - `400` missing/invalid file
+  - `400` missing required headers
+  - `401` auth
+- Example request:
+
+```bash
+curl -X POST http://localhost:3000/admin/products/import/csv \
+  -H 'Authorization: Bearer <token>' \
+  -F 'file=@/path/to/products.csv'
+```
+
+- Example response:
+
+```json
+{
+  "message": "Products CSV import completed.",
+  "data": {
+    "totalRows": 5,
+    "createdCount": 2,
+    "updatedCount": 2,
+    "skippedCount": 1,
+    "errors": [
+      {
+        "row": 6,
+        "reason": "Category not found for categorySlug='unknown-category'."
+      }
+    ]
+  }
+}
+```
+
 ### GET `/admin/products/export/csv`
 
 - Purpose: Export admin products using same filters as admin product list.
@@ -1044,6 +1125,60 @@ curl -X POST http://localhost:3000/admin/products/prod_1/images \
 }
 ```
 
+### POST `/admin/products/:productId/images/upload`
+
+- Purpose: Upload a product image file through backend-managed Cloudinary integration and persist the resulting `ProductImage` row.
+- Auth requirements: JWT required.
+- Params: `productId`.
+- Query: None.
+- Request body:
+  - `multipart/form-data`
+  - required file field: `file` (image only)
+  - optional fields:
+    - `alt?: string`
+    - `order?: number` (int >= 0)
+- Behavior:
+  - Validates product existence.
+  - Validates file type (`jpeg/jpg/png/webp/gif/avif`) and max file size (8MB).
+  - Uploads to Cloudinary folder pattern:
+    - `<CLOUDINARY_FOLDER_ROOT>/<CLOUDINARY_PRODUCTS_FOLDER>/<product-slug>/`
+  - Stores `url`, `secureUrl`, `publicId`, `alt`, `order` in `ProductImage`.
+- Response body:
+  - `{ message: "Product image uploaded successfully.", data: ProductImage }`
+- Error cases:
+  - `401` auth
+  - `404` product not found
+  - `400` invalid file/type/size or invalid metadata fields
+  - `500` Cloudinary upload failure
+- Example request:
+
+```bash
+curl -X POST http://localhost:3000/admin/products/prod_1/images/upload \
+  -H 'Authorization: Bearer <token>' \
+  -F 'file=@/tmp/alpha-front.jpg' \
+  -F 'alt=Front view' \
+  -F 'order=0'
+```
+
+- Example response:
+
+```json
+{
+  "message": "Product image uploaded successfully.",
+  "data": {
+    "id": "img_3",
+    "url": "http://res.cloudinary.com/demo/image/upload/v1/tennjor/products/tenis-alpha/alpha-front.jpg",
+    "secureUrl": "https://res.cloudinary.com/demo/image/upload/v1/tennjor/products/tenis-alpha/alpha-front.jpg",
+    "publicId": "tennjor/products/tenis-alpha/alpha-front",
+    "alt": "Front view",
+    "order": 0,
+    "productId": "prod_1",
+    "createdAt": "...",
+    "updatedAt": "..."
+  }
+}
+```
+
 ### PATCH `/admin/product-images/:id`
 
 - Purpose: Update image fields/order.
@@ -1094,10 +1229,16 @@ curl -X PATCH http://localhost:3000/admin/product-images/img_2 \
 - Query: None.
 - Request body: None.
 - Response body:
-  - `{ message: "Product image deleted successfully.", data: { id, publicId } }`
+  - `{ message: "Product image deleted successfully.", data: { id, publicId, cloudinaryCleanup } }`
 - Error cases:
   - `401` auth
   - `404` image not found
+- Notes:
+  - If `publicId` exists, backend attempts Cloudinary asset deletion before DB delete.
+  - `cloudinaryCleanup` reports the attempt status/result:
+    - `{ attempted: false }` (no publicId)
+    - `{ attempted: true, result: "ok" | "not found" }`
+    - `{ attempted: true, error: "<message>" }` (cleanup failure while DB delete still proceeds)
 - Example request:
 
 ```bash
@@ -1112,7 +1253,11 @@ curl -X DELETE http://localhost:3000/admin/product-images/img_2 \
   "message": "Product image deleted successfully.",
   "data": {
     "id": "img_2",
-    "publicId": null
+    "publicId": "tennjor/products/tenis-alpha/front",
+    "cloudinaryCleanup": {
+      "attempted": true,
+      "result": "ok"
+    }
   }
 }
 ```
@@ -1155,6 +1300,62 @@ curl -X GET 'http://localhost:3000/admin/categories?isActive=true' \
       "_count": { "products": 14 }
     }
   ]
+}
+```
+
+### POST `/admin/categories/import/csv`
+
+- Purpose: Bulk import categories for admin catalog management.
+- Auth requirements: JWT required.
+- Params: None.
+- Query: None.
+- Request body:
+  - `multipart/form-data`
+  - required file field: `file`
+  - accepted file types: `text/csv`, `application/vnd.ms-excel`, `text/plain`
+  - max file size: `5MB`
+  - filename must end with `.csv`
+- Expected CSV columns:
+  - required: `name`, `slug`
+  - optional: `isActive`, `imageWebUrl`, `imageMobileUrl`
+- Import behavior:
+  - create category when slug does not exist
+  - update category when slug already exists
+  - URL fields are validated if present
+  - accepts `null` value for image URL columns to clear URL value
+  - row failures do not fail the whole import (partial success)
+- Response body:
+  - `{ message, data: { totalRows, createdCount, updatedCount, skippedCount, errors[] } }`
+  - `errors[]` entries include `{ row, reason }`
+- Error cases:
+  - `400` missing/invalid file
+  - `400` missing required headers
+  - `401` auth
+- Example request:
+
+```bash
+curl -X POST http://localhost:3000/admin/categories/import/csv \
+  -H 'Authorization: Bearer <token>' \
+  -F 'file=@/path/to/categories.csv'
+```
+
+- Example response:
+
+```json
+{
+  "message": "Categories CSV import completed.",
+  "data": {
+    "totalRows": 4,
+    "createdCount": 1,
+    "updatedCount": 2,
+    "skippedCount": 1,
+    "errors": [
+      {
+        "row": 5,
+        "reason": "Field 'slug' is required."
+      }
+    ]
+  }
 }
 ```
 
@@ -1337,6 +1538,140 @@ curl -X PATCH http://localhost:3000/admin/categories/cat_1 \
     "createdAt": "...",
     "updatedAt": "...",
     "_count": { "products": 14 }
+  }
+}
+```
+
+### POST `/admin/categories/:id/images/web/upload`
+
+- Purpose: Upload or replace the category web image through backend-managed Cloudinary integration.
+- Auth requirements: JWT required.
+- Params:
+  - `id: string` (category id)
+- Query: None.
+- Request body:
+  - `multipart/form-data`
+  - required file field: `file`
+  - file validation:
+    - allowed MIME types: `image/jpeg`, `image/jpg`, `image/png`, `image/webp`, `image/gif`, `image/avif`
+    - max size: `8MB`
+- Upload strategy:
+  - folder: `<CLOUDINARY_FOLDER_ROOT>/<CLOUDINARY_CATEGORIES_FOLDER>/<category-slug>/`
+  - deterministic public id: `<folder>/web`
+- Replacement behavior:
+  - backend uploads using deterministic public id for `web` slot
+  - category DB fields updated:
+    - `imageWebUrl`
+    - `imageWebPublicId`
+  - if previous `imageWebPublicId` exists and differs from new `publicId`, backend attempts Cloudinary delete for old asset
+  - cleanup failures are handled gracefully and reported in response (`previousAssetCleanup.error`), DB update remains successful
+- Response body:
+  - `{ message: "Category web image uploaded successfully.", data: { category, uploadedAsset, previousAssetCleanup } }`
+- Error cases:
+  - `400` missing file / invalid file type / file too large
+  - `401` auth
+  - `404` category not found
+  - `500` Cloudinary upload failure
+- Example request:
+
+```bash
+curl -X POST http://localhost:3000/admin/categories/cat_1/images/web/upload \
+  -H 'Authorization: Bearer <token>' \
+  -F 'file=@/path/to/category-web.jpg'
+```
+
+- Example response:
+
+```json
+{
+  "message": "Category web image uploaded successfully.",
+  "data": {
+    "category": {
+      "id": "cat_1",
+      "name": "Tênis",
+      "slug": "tenis",
+      "isActive": true,
+      "imageWebUrl": "https://res.cloudinary.com/demo/image/upload/v1/tennjor/categories/tenis/web.jpg",
+      "imageMobileUrl": "https://res.cloudinary.com/demo/image/upload/v1/tennjor/categories/tenis/mobile.jpg",
+      "createdAt": "...",
+      "updatedAt": "..."
+    },
+    "uploadedAsset": {
+      "url": "http://res.cloudinary.com/demo/image/upload/v1/tennjor/categories/tenis/web.jpg",
+      "secureUrl": "https://res.cloudinary.com/demo/image/upload/v1/tennjor/categories/tenis/web.jpg",
+      "publicId": "tennjor/categories/tenis/web"
+    },
+    "previousAssetCleanup": {
+      "attempted": false,
+      "skippedReason": "same_public_id_overwritten"
+    }
+  }
+}
+```
+
+### POST `/admin/categories/:id/images/mobile/upload`
+
+- Purpose: Upload or replace the category mobile image through backend-managed Cloudinary integration.
+- Auth requirements: JWT required.
+- Params:
+  - `id: string` (category id)
+- Query: None.
+- Request body:
+  - `multipart/form-data`
+  - required file field: `file`
+  - file validation:
+    - allowed MIME types: `image/jpeg`, `image/jpg`, `image/png`, `image/webp`, `image/gif`, `image/avif`
+    - max size: `8MB`
+- Upload strategy:
+  - folder: `<CLOUDINARY_FOLDER_ROOT>/<CLOUDINARY_CATEGORIES_FOLDER>/<category-slug>/`
+  - deterministic public id: `<folder>/mobile`
+- Replacement behavior:
+  - backend uploads using deterministic public id for `mobile` slot
+  - category DB fields updated:
+    - `imageMobileUrl`
+    - `imageMobilePublicId`
+  - if previous `imageMobilePublicId` exists and differs from new `publicId`, backend attempts Cloudinary delete for old asset
+  - cleanup failures are handled gracefully and reported in response (`previousAssetCleanup.error`), DB update remains successful
+- Response body:
+  - `{ message: "Category mobile image uploaded successfully.", data: { category, uploadedAsset, previousAssetCleanup } }`
+- Error cases:
+  - `400` missing file / invalid file type / file too large
+  - `401` auth
+  - `404` category not found
+  - `500` Cloudinary upload failure
+- Example request:
+
+```bash
+curl -X POST http://localhost:3000/admin/categories/cat_1/images/mobile/upload \
+  -H 'Authorization: Bearer <token>' \
+  -F 'file=@/path/to/category-mobile.jpg'
+```
+
+- Example response:
+
+```json
+{
+  "message": "Category mobile image uploaded successfully.",
+  "data": {
+    "category": {
+      "id": "cat_1",
+      "name": "Tênis",
+      "slug": "tenis",
+      "isActive": true,
+      "imageWebUrl": "https://res.cloudinary.com/demo/image/upload/v1/tennjor/categories/tenis/web.jpg",
+      "imageMobileUrl": "https://res.cloudinary.com/demo/image/upload/v1/tennjor/categories/tenis/mobile.jpg",
+      "createdAt": "...",
+      "updatedAt": "..."
+    },
+    "uploadedAsset": {
+      "url": "http://res.cloudinary.com/demo/image/upload/v1/tennjor/categories/tenis/mobile.jpg",
+      "secureUrl": "https://res.cloudinary.com/demo/image/upload/v1/tennjor/categories/tenis/mobile.jpg",
+      "publicId": "tennjor/categories/tenis/mobile"
+    },
+    "previousAssetCleanup": {
+      "attempted": false,
+      "skippedReason": "same_public_id_overwritten"
+    }
   }
 }
 ```
@@ -1541,7 +1876,9 @@ curl -X PATCH http://localhost:3000/admin/quote-requests/qr_1/status \
   - `isActive = true`
   - have at least one active product in DB filter, then additionally filtered in service to at least 3 active products.
 - Admin category list/detail includes `_count.products`.
-- Category images are URL fields on category model (`imageWebUrl`, `imageMobileUrl`), not separate image entity.
+- Category images are slot fields on category model, not separate image entity:
+  - public URL fields: `imageWebUrl`, `imageMobileUrl`
+  - Cloudinary tracking fields: `imageWebPublicId`, `imageMobilePublicId` (used for safe replacement/cleanup flows)
 
 ### Products
 
@@ -1555,6 +1892,7 @@ curl -X PATCH http://localhost:3000/admin/quote-requests/qr_1/status \
 - `sku` is optional but unique when present.
 - Public endpoints include only active variants.
 - Admin endpoints expose and can edit `isActive` and `stock`.
+- TODO: CSV import endpoint for variants is not implemented yet in this iteration (deferred to keep first import version focused and reviewable).
 
 ### Product Images
 
@@ -1589,6 +1927,7 @@ Suggested service function names:
 - `getAdminDashboardStats()`
 - `exportAdminDashboardStatsCsv()`
 - `getAdminProducts(query)`
+- `importAdminProductsCsv(file)`
 - `exportAdminProductsCsv(query)`
 - `getAdminProduct(id)`
 - `createAdminProduct(payload)`
@@ -1599,10 +1938,13 @@ Suggested service function names:
 - `updateAdminProductImage(id, payload)`
 - `deleteAdminProductImage(id)`
 - `getAdminCategories(query)`
+- `importAdminCategoriesCsv(file)`
 - `exportAdminCategoriesCsv(query)`
 - `getAdminCategory(id)`
 - `createAdminCategory(payload)`
 - `updateAdminCategory(id, payload)`
+- `uploadAdminCategoryWebImage(id, file)`
+- `uploadAdminCategoryMobileImage(id, file)`
 - `getAdminQuoteRequests(query)`
 - `getAdminQuoteRequest(id)`
 - `updateAdminQuoteRequestStatus(id, payload)`
