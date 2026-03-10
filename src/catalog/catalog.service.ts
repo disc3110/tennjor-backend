@@ -538,14 +538,7 @@ export class CatalogService {
   async deleteAdminProduct(id: string) {
     const existingProduct = await this.prisma.product.findUnique({
       where: { id },
-      select: {
-        id: true,
-        images: {
-          select: {
-            publicId: true,
-          },
-        },
-      },
+      select: { id: true },
     });
 
     if (!existingProduct) {
@@ -561,10 +554,6 @@ export class CatalogService {
         'Cannot delete product referenced by quote requests.',
       );
     }
-
-    const cloudinaryPublicIds = existingProduct.images
-      .map((image) => image.publicId)
-      .filter((publicId): publicId is string => Boolean(publicId));
 
     await this.prisma.$transaction([
       this.prisma.productVariant.deleteMany({
@@ -585,7 +574,6 @@ export class CatalogService {
         id,
         deletedVariants: true,
         deletedImages: true,
-        cloudinaryCleanupPendingPublicIds: cloudinaryPublicIds,
       },
     };
   }
@@ -820,21 +808,15 @@ export class CatalogService {
       data: {
         productId,
         url: createAdminProductImageDto.url,
-        secureUrl: createAdminProductImageDto.secureUrl,
-        publicId: createAdminProductImageDto.publicId,
         alt: createAdminProductImageDto.alt,
         order: createAdminProductImageDto.order ?? 0,
       },
       select: {
         id: true,
         url: true,
-        secureUrl: true,
-        publicId: true,
         alt: true,
         order: true,
         productId: true,
-        createdAt: true,
-        updatedAt: true,
       },
     });
 
@@ -875,21 +857,15 @@ export class CatalogService {
       data: {
         productId,
         url: uploadedAsset.url,
-        secureUrl: uploadedAsset.secureUrl,
-        publicId: uploadedAsset.publicId,
         alt: uploadAdminProductImageDto.alt,
         order: uploadAdminProductImageDto.order ?? 0,
       },
       select: {
         id: true,
         url: true,
-        secureUrl: true,
-        publicId: true,
         alt: true,
         order: true,
         productId: true,
-        createdAt: true,
-        updatedAt: true,
       },
     });
 
@@ -918,12 +894,6 @@ export class CatalogService {
         ...(updateAdminProductImageDto.url !== undefined
           ? { url: updateAdminProductImageDto.url }
           : {}),
-        ...(updateAdminProductImageDto.secureUrl !== undefined
-          ? { secureUrl: updateAdminProductImageDto.secureUrl }
-          : {}),
-        ...(updateAdminProductImageDto.publicId !== undefined
-          ? { publicId: updateAdminProductImageDto.publicId }
-          : {}),
         ...(updateAdminProductImageDto.alt !== undefined
           ? { alt: updateAdminProductImageDto.alt }
           : {}),
@@ -934,13 +904,9 @@ export class CatalogService {
       select: {
         id: true,
         url: true,
-        secureUrl: true,
-        publicId: true,
         alt: true,
         order: true,
         productId: true,
-        createdAt: true,
-        updatedAt: true,
       },
     });
 
@@ -953,44 +919,11 @@ export class CatalogService {
   async deleteAdminProductImage(id: string) {
     const existingImage = await this.prisma.productImage.findUnique({
       where: { id },
-      select: { id: true, publicId: true },
+      select: { id: true },
     });
 
     if (!existingImage) {
       throw new NotFoundException('Product image not found.');
-    }
-
-    let cloudinaryCleanup:
-      | {
-          attempted: boolean;
-          result?: string;
-          error?: string;
-        }
-      | undefined;
-
-    if (existingImage.publicId) {
-      try {
-        const destroyResult = await this.cloudinaryService.deleteImage(
-          existingImage.publicId,
-        );
-        cloudinaryCleanup = {
-          attempted: true,
-          result: destroyResult.result,
-        };
-      } catch (error) {
-        this.logger.error(
-          `Cloudinary cleanup failed for publicId=${existingImage.publicId}`,
-          error instanceof Error ? error.stack : undefined,
-        );
-        cloudinaryCleanup = {
-          attempted: true,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        };
-      }
-    } else {
-      cloudinaryCleanup = {
-        attempted: false,
-      };
     }
 
     await this.prisma.productImage.delete({
@@ -1001,8 +934,6 @@ export class CatalogService {
       message: 'Product image deleted successfully.',
       data: {
         id: existingImage.id,
-        publicId: existingImage.publicId,
-        cloudinaryCleanup,
       },
     };
   }
@@ -1046,8 +977,6 @@ export class CatalogService {
             select: {
               id: true,
               url: true,
-              secureUrl: true,
-              publicId: true,
               alt: true,
               order: true,
             },
@@ -1177,12 +1106,8 @@ export class CatalogService {
           select: {
             id: true,
             url: true,
-            secureUrl: true,
-            publicId: true,
             alt: true,
             order: true,
-            createdAt: true,
-            updatedAt: true,
           },
         },
         variants: {
@@ -1648,7 +1573,6 @@ export class CatalogService {
               select: {
                 id: true,
                 url: true,
-                secureUrl: true,
                 alt: true,
                 order: true,
               },
@@ -1943,11 +1867,6 @@ export class CatalogService {
         products: {
           select: {
             id: true,
-            images: {
-              select: {
-                publicId: true,
-              },
-            },
           },
         },
       },
@@ -1959,11 +1878,6 @@ export class CatalogService {
 
     const productIds = existingCategory.products.map((product) => product.id);
     const cloudinaryPublicIds = [
-      ...existingCategory.products.flatMap((product) =>
-        product.images
-          .map((image) => image.publicId)
-          .filter((publicId): publicId is string => Boolean(publicId)),
-      ),
       ...[existingCategory.imageWebPublicId, existingCategory.imageMobilePublicId]
         .filter((publicId): publicId is string => Boolean(publicId)),
     ];

@@ -64,46 +64,67 @@ async function main() {
 
   await prisma.storeConfig.create({
     data: {
-      whatsappPhone: '+5215555555555',
+      whatsappPhone: '+12365916362',
       storeName: 'Zapatería Tennjor',
     },
   });
   console.log('🏬 StoreConfig created');
 
-  const adminPasswordHash = await bcrypt.hash('Admin123', 10);
-  const userPasswordHash = await bcrypt.hash('User123', 10);
+  const jmonPasswordHash = await bcrypt.hash('qufwiq-mypdar-kEpji6', 10);
+  const diegoPasswordHash = await bcrypt.hash('hebvyx-sifxar-toPwo0', 10);
+  const leninPasswordHash = await bcrypt.hash('padgit-cexkuh-hYmcu6', 10);
 
-  const admin = await prisma.user.upsert({
-    where: { email: 'admin@example.com' },
+  const jmonAdmin = await prisma.user.upsert({
+    where: { email: 'jmon216@gmail.com' },
     update: {
-      password: adminPasswordHash,
-      name: 'Admin Demo',
+      password: jmonPasswordHash,
+      name: 'Jorge Montante',
       role: UserRole.ADMIN,
     },
     create: {
-      email: 'admin@example.com',
-      password: adminPasswordHash,
-      name: 'Admin Demo',
+      email: 'jmon216@gmail.com',
+      password: jmonPasswordHash,
+      name: 'Jmon Admin',
       role: UserRole.ADMIN,
     },
   });
 
-  const customer = await prisma.user.upsert({
-    where: { email: 'cliente@example.com' },
+  const diegoAdmin = await prisma.user.upsert({
+    where: { email: 'disc3110@gmail.com' },
     update: {
-      password: userPasswordHash,
-      name: 'Cliente Demo',
-      role: UserRole.USER,
+      password: diegoPasswordHash,
+      name: 'Diego Solis',
+      role: UserRole.ADMIN,
     },
     create: {
-      email: 'cliente@example.com',
-      password: userPasswordHash,
-      name: 'Cliente Demo',
-      role: UserRole.USER,
+      email: 'disc3110@gmail.com',
+      password: diegoPasswordHash,
+      name: 'Diego Solis',
+      role: UserRole.ADMIN,
     },
   });
 
-  console.log('👤 Users created:', admin.email, customer.email);
+  const leninAdmin = await prisma.user.upsert({
+    where: { email: 'leninin123@gmail.com' },
+    update: {
+      password: leninPasswordHash,
+      name: 'Lenin Solis',
+      role: UserRole.ADMIN,
+    },
+    create: {
+      email: 'leninin123@gmail.com',
+      password: leninPasswordHash,
+      name: 'Lenin Admin',
+      role: UserRole.ADMIN,
+    },
+  });
+
+  const admin = diegoAdmin;
+
+  console.log(
+    '👤 Admin users created:',
+    [jmonAdmin.email, diegoAdmin.email, leninAdmin.email].join(', '),
+  );
 
   const futbol = await prisma.category.create({
     data: {
@@ -233,24 +254,6 @@ async function main() {
     'Amarillo',
   ];
 
-  const extractCloudinaryPublicId = (url: string) => {
-    const marker = '/upload/';
-    if (!url.includes('res.cloudinary.com') || !url.includes(marker)) {
-      return null;
-    }
-
-    const afterUpload = url.split(marker)[1];
-    if (!afterUpload) {
-      return null;
-    }
-
-    const parts = afterUpload.split('/').filter(Boolean);
-    const withoutVersion = parts[0]?.match(/^v\d+$/) ? parts.slice(1) : parts;
-    const joined = withoutVersion.join('/');
-
-    return joined.replace(/\.[^/.]+$/, '');
-  };
-
   const ENABLE_BG_REMOVAL = false;
 
   const withCloudinaryTransform = (url: string) => {
@@ -318,15 +321,11 @@ async function main() {
       create: [
         {
           url: firstTransformedUrl,
-          secureUrl: firstTransformedUrl,
-          publicId: extractCloudinaryPublicId(firstOriginalUrl),
           alt: `${seedKey} - imagen 1`,
           order: 1,
         },
         {
           url: secondTransformedUrl,
-          secureUrl: secondTransformedUrl,
-          publicId: extractCloudinaryPublicId(secondOriginalUrl),
           alt: `${seedKey} - imagen 2`,
           order: 2,
         },
