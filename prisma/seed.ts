@@ -1,5 +1,13 @@
 import 'dotenv/config';
-import { PrismaClient, UserRole } from '@prisma/client';
+import {
+  CompletedSaleStatus,
+  DiscountType,
+  InternalSaleQuoteStatus,
+  PrismaClient,
+  QuoteRequestSource,
+  QuoteRequestStatus,
+  UserRole,
+} from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import * as bcrypt from 'bcrypt';
@@ -19,6 +27,8 @@ const prisma = new PrismaClient({ adapter });
 
 async function main() {
   console.log('🌱 Seeding database...');
+  const toMoney = (value: number) => Math.round(value * 100) / 100;
+  const toPct = (value: number) => Math.round(value * 10000) / 10000;
 
   const sharedProductImages = [
     'https://res.cloudinary.com/dox2ajvii/image/upload/v1772735026/casual_blanco_1512x.jpg_b5nexc.webp',
@@ -39,6 +49,10 @@ async function main() {
     'https://res.cloudinary.com/dox2ajvii/image/upload/v1772737572/DSC_6645_720x_ndhuvl.jpg';
 
   // --- Clean tables in FK-safe order ---
+  await prisma.completedSaleItem.deleteMany();
+  await prisma.completedSale.deleteMany();
+  await prisma.internalSaleQuoteItem.deleteMany();
+  await prisma.internalSaleQuote.deleteMany();
   await prisma.quoteRequestItem.deleteMany();
   await prisma.quoteRequest.deleteMany();
   await prisma.productVariant.deleteMany();
@@ -819,6 +833,8 @@ async function main() {
         name: p.name,
         slug: productSlug,
         description: buildDescription(p),
+        baseCost: toMoney(p.price * 0.58),
+        costCurrency: 'MXN',
         categoryId,
         isActive: true,
         images: createImagesFromUrls(p.sku, sharedProductImages, i),
@@ -830,6 +846,289 @@ async function main() {
   }
 
   console.log(`👟 Products created: ${createdProductSlugs.length}`);
+
+  const commercialProducts = await prisma.product.findMany({
+    orderBy: { createdAt: 'asc' },
+    take: 2,
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      baseCost: true,
+      variants: {
+        where: { isActive: true },
+        orderBy: { size: 'asc' },
+        take: 1,
+        select: {
+          id: true,
+          size: true,
+          color: true,
+          sku: true,
+        },
+      },
+    },
+  });
+
+  if (commercialProducts.length < 2) {
+    throw new Error(
+      'Seed requires at least 2 products to build sales fixtures.',
+    );
+  }
+
+  const [productA, productB] = commercialProducts;
+  const variantA = productA.variants[0];
+  const variantB = productB.variants[0];
+
+  const publicQuoteRequest = await prisma.quoteRequest.create({
+    data: {
+      customerName: 'Comercial Cliente Demo',
+      customerPhone: '+5215511122233',
+      customerEmail: 'compras.demo@example.com',
+      customerCity: 'Ciudad de México',
+      notes: 'Solicita propuesta para mayoreo.',
+      source: QuoteRequestSource.WEB_FORM,
+      status: QuoteRequestStatus.NEW,
+      items: {
+        create: [
+          {
+            productId: productA.id,
+            productNameSnapshot: productA.name,
+            productSlugSnapshot: productA.slug,
+            size: variantA?.size ?? '26',
+            color: variantA?.color ?? 'Negro',
+            quantity: 12,
+          },
+          {
+            productId: productB.id,
+            productNameSnapshot: productB.name,
+            productSlugSnapshot: productB.slug,
+            size: variantB?.size ?? '26',
+            color: variantB?.color ?? 'Blanco',
+            quantity: 8,
+          },
+        ],
+      },
+    },
+  });
+
+  const draftItemAQuantity = 12;
+  const draftItemAUnitSale = 780;
+  const draftItemAUnitCost = toMoney(
+    Number(productA.baseCost ?? toMoney(draftItemAUnitSale * 0.6)),
+  );
+  const draftItemALineRevenue = toMoney(
+    draftItemAQuantity * draftItemAUnitSale,
+  );
+  const draftItemALineCost = toMoney(draftItemAQuantity * draftItemAUnitCost);
+  const draftItemALineProfit = toMoney(
+    draftItemALineRevenue - draftItemALineCost,
+  );
+
+  const draftItemBQuantity = 8;
+  const draftItemBUnitSale = 640;
+  const draftItemBUnitCost = toMoney(
+    Number(productB.baseCost ?? toMoney(draftItemBUnitSale * 0.6)),
+  );
+  const draftItemBLineRevenue = toMoney(
+    draftItemBQuantity * draftItemBUnitSale,
+  );
+  const draftItemBLineCost = toMoney(draftItemBQuantity * draftItemBUnitCost);
+  const draftItemBLineProfit = toMoney(
+    draftItemBLineRevenue - draftItemBLineCost,
+  );
+
+  const draftSubtotal = toMoney(draftItemALineRevenue + draftItemBLineRevenue);
+  const draftDiscountTotal = 500;
+  const draftTotalRevenue = toMoney(draftSubtotal - draftDiscountTotal);
+  const draftTotalCost = toMoney(draftItemALineCost + draftItemBLineCost);
+  const draftTotalProfit = toMoney(draftTotalRevenue - draftTotalCost);
+  const draftMarginPct =
+    draftTotalRevenue > 0
+      ? toPct((draftTotalProfit / draftTotalRevenue) * 100)
+      : null;
+
+  const draftInternalQuote = await prisma.internalSaleQuote.create({
+    data: {
+      code: 'SQ-2026-000001',
+      status: InternalSaleQuoteStatus.DRAFT,
+      customerName: 'Comercial Cliente Demo',
+      customerPhone: '+5215511122233',
+      customerEmail: 'compras.demo@example.com',
+      customerCity: 'Ciudad de México',
+      notes: 'Borrador interno para negociación mayoreo.',
+      currency: 'MXN',
+      subtotal: draftSubtotal,
+      discountTotal: draftDiscountTotal,
+      totalRevenue: draftTotalRevenue,
+      totalCost: draftTotalCost,
+      totalProfit: draftTotalProfit,
+      marginPct: draftMarginPct,
+      publicQuoteRequestId: publicQuoteRequest.id,
+      createdByUserId: admin.id,
+      items: {
+        create: [
+          {
+            productId: productA.id,
+            variantId: variantA?.id,
+            productNameSnapshot: productA.name,
+            productSlugSnapshot: productA.slug,
+            sizeSnapshot: variantA?.size ?? null,
+            colorSnapshot: variantA?.color ?? null,
+            skuSnapshot: variantA?.sku ?? null,
+            quantity: draftItemAQuantity,
+            unitSalePrice: draftItemAUnitSale,
+            unitCostSnapshot: draftItemAUnitCost,
+            lineRevenue: draftItemALineRevenue,
+            lineCost: draftItemALineCost,
+            lineProfit: draftItemALineProfit,
+            discountType: DiscountType.PERCENTAGE,
+            discountValue: 5,
+            sortOrder: 1,
+          },
+          {
+            productId: productB.id,
+            variantId: variantB?.id,
+            productNameSnapshot: productB.name,
+            productSlugSnapshot: productB.slug,
+            sizeSnapshot: variantB?.size ?? null,
+            colorSnapshot: variantB?.color ?? null,
+            skuSnapshot: variantB?.sku ?? null,
+            quantity: draftItemBQuantity,
+            unitSalePrice: draftItemBUnitSale,
+            unitCostSnapshot: draftItemBUnitCost,
+            lineRevenue: draftItemBLineRevenue,
+            lineCost: draftItemBLineCost,
+            lineProfit: draftItemBLineProfit,
+            discountType: DiscountType.FIXED,
+            discountValue: 120,
+            sortOrder: 2,
+          },
+        ],
+      },
+    },
+  });
+
+  const completedItemQuantity = 20;
+  const completedItemUnitSale = 760;
+  const completedItemUnitCost = toMoney(
+    Number(productA.baseCost ?? toMoney(completedItemUnitSale * 0.6)),
+  );
+  const completedItemLineRevenue = toMoney(
+    completedItemQuantity * completedItemUnitSale,
+  );
+  const completedItemLineCost = toMoney(
+    completedItemQuantity * completedItemUnitCost,
+  );
+  const completedItemLineProfit = toMoney(
+    completedItemLineRevenue - completedItemLineCost,
+  );
+  const completedDiscountTotal = 800;
+  const completedTotalRevenue = toMoney(
+    completedItemLineRevenue - completedDiscountTotal,
+  );
+  const completedTotalCost = completedItemLineCost;
+  const completedTotalProfit = toMoney(
+    completedTotalRevenue - completedTotalCost,
+  );
+  const completedMarginPct =
+    completedTotalRevenue > 0
+      ? toPct((completedTotalProfit / completedTotalRevenue) * 100)
+      : null;
+
+  const completedAt = new Date();
+  const completedInternalQuote = await prisma.internalSaleQuote.create({
+    data: {
+      code: 'SQ-2026-000002',
+      status: InternalSaleQuoteStatus.COMPLETED,
+      customerName: 'Distribuidora Rivera',
+      customerPhone: '+5215577788899',
+      customerEmail: 'ventas@rivera-demo.mx',
+      customerCity: 'Guadalajara',
+      notes: 'Cotización convertida a venta cerrada.',
+      currency: 'MXN',
+      subtotal: completedItemLineRevenue,
+      discountTotal: completedDiscountTotal,
+      totalRevenue: completedTotalRevenue,
+      totalCost: completedTotalCost,
+      totalProfit: completedTotalProfit,
+      marginPct: completedMarginPct,
+      createdByUserId: admin.id,
+      approvedAt: new Date(completedAt.getTime() - 2 * 60 * 60 * 1000),
+      completedAt,
+      items: {
+        create: [
+          {
+            productId: productA.id,
+            variantId: variantA?.id,
+            productNameSnapshot: productA.name,
+            productSlugSnapshot: productA.slug,
+            sizeSnapshot: variantA?.size ?? null,
+            colorSnapshot: variantA?.color ?? null,
+            skuSnapshot: variantA?.sku ?? null,
+            quantity: completedItemQuantity,
+            unitSalePrice: completedItemUnitSale,
+            unitCostSnapshot: completedItemUnitCost,
+            lineRevenue: completedItemLineRevenue,
+            lineCost: completedItemLineCost,
+            lineProfit: completedItemLineProfit,
+            discountType: DiscountType.FIXED,
+            discountValue: completedDiscountTotal,
+            sortOrder: 1,
+          },
+        ],
+      },
+    },
+  });
+
+  const completedSale = await prisma.completedSale.create({
+    data: {
+      saleNumber: 'S-2026-000001',
+      quoteId: completedInternalQuote.id,
+      status: CompletedSaleStatus.COMPLETED,
+      customerName: completedInternalQuote.customerName,
+      customerPhone: completedInternalQuote.customerPhone,
+      customerEmail: completedInternalQuote.customerEmail,
+      customerCity: completedInternalQuote.customerCity,
+      currency: 'MXN',
+      subtotal: completedItemLineRevenue,
+      discountTotal: completedDiscountTotal,
+      totalRevenue: completedTotalRevenue,
+      totalCost: completedTotalCost,
+      totalProfit: completedTotalProfit,
+      marginPct: completedMarginPct,
+      notes: 'Venta cerrada en mostrador mayorista.',
+      createdByUserId: admin.id,
+      completedAt,
+      items: {
+        create: [
+          {
+            productId: productA.id,
+            variantId: variantA?.id,
+            productNameSnapshot: productA.name,
+            productSlugSnapshot: productA.slug,
+            sizeSnapshot: variantA?.size ?? null,
+            colorSnapshot: variantA?.color ?? null,
+            skuSnapshot: variantA?.sku ?? null,
+            quantity: completedItemQuantity,
+            unitSalePrice: completedItemUnitSale,
+            unitCostSnapshot: completedItemUnitCost,
+            lineRevenue: completedItemLineRevenue,
+            lineCost: completedItemLineCost,
+            lineProfit: completedItemLineProfit,
+            discountType: DiscountType.FIXED,
+            discountValue: completedDiscountTotal,
+          },
+        ],
+      },
+    },
+  });
+
+  console.log('🧾 Public quote request created:', publicQuoteRequest.id);
+  console.log(
+    '💼 Internal sale quotes created:',
+    [draftInternalQuote.code, completedInternalQuote.code].join(', '),
+  );
+  console.log('💰 Completed sale created:', completedSale.saleNumber);
   console.log('✅ Seed finished successfully');
 }
 

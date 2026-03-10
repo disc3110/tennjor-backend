@@ -7,13 +7,16 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  password  String
-  role      UserRole @default(USER)
+  id                        String                  @id @default(cuid())
+  email                     String                  @unique
+  name                      String
+  createdAt                 DateTime                @default(now())
+  updatedAt                 DateTime                @updatedAt
+  password                  String
+  role                      UserRole                @default(USER)
+  internalSaleQuotesCreated InternalSaleQuote[]
+  internalSaleQuoteNotes    InternalSaleQuoteNote[]
+  completedSalesCreated     CompletedSale[]
 }
 
 model Category {
@@ -31,18 +34,22 @@ model Category {
 }
 
 model Product {
-  id                String             @id @default(cuid())
-  name              String
-  slug              String             @unique
-  description       String?
-  isActive          Boolean            @default(true)
-  categoryId        String
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  category          Category           @relation(fields: [categoryId], references: [id])
-  images            ProductImage[]
-  variants          ProductVariant[]
-  quoteRequestItems QuoteRequestItem[]
+  id                 String                  @id @default(cuid())
+  name               String
+  slug               String                  @unique
+  description        String?
+  baseCost           Decimal?                @db.Decimal(12, 2)
+  costCurrency       String                  @default("MXN")
+  isActive           Boolean                 @default(true)
+  categoryId         String
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  category           Category                @relation(fields: [categoryId], references: [id])
+  images             ProductImage[]
+  variants           ProductVariant[]
+  quoteRequestItems  QuoteRequestItem[]
+  internalQuoteItems InternalSaleQuoteItem[]
+  completedSaleItems CompletedSaleItem[]
 }
 
 model ProductImage {
@@ -61,45 +68,51 @@ model ProductImage {
 }
 
 model ProductVariant {
-  id        String  @id @default(cuid())
-  size      String
-  color     String
-  sku       String? @unique
-  isActive  Boolean @default(true)
-  stock     Int?
-  productId String
-  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  id                 String                  @id @default(cuid())
+  size               String
+  color              String
+  sku                String?                 @unique
+  isActive           Boolean                 @default(true)
+  stock              Int?
+  productId          String
+  product            Product                 @relation(fields: [productId], references: [id], onDelete: Cascade)
+  internalQuoteItems InternalSaleQuoteItem[]
+  completedSaleItems CompletedSaleItem[]
 }
 
 model QuoteRequest {
-  id            String             @id @default(cuid())
-  customerName  String
-  customerEmail String?
-  customerPhone String
-  customerCity  String?
-  notes         String?
-  internalNotes String[]           @default([])
-  status        QuoteRequestStatus @default(NEW)
-  source        QuoteRequestSource @default(WEB_FORM)
-  createdAt     DateTime           @default(now())
-  updatedAt     DateTime           @updatedAt
-  items         QuoteRequestItem[]
+  id                String             @id @default(cuid())
+  customerName      String
+  customerEmail     String?
+  customerPhone     String
+  customerCity      String?
+  notes             String?
+  internalNotes     String[]           @default([])
+  status            QuoteRequestStatus @default(NEW)
+  convertedAt       DateTime?
+  source            QuoteRequestSource @default(WEB_FORM)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  items             QuoteRequestItem[]
+  internalSaleQuote InternalSaleQuote?
 
   @@map("quote_requests")
 }
 
 model QuoteRequestItem {
-  id                  String       @id @default(cuid())
-  quoteRequestId      String
-  productId           String
-  productNameSnapshot String
-  productSlugSnapshot String
-  size                String
-  color               String
-  quantity            Int          @default(1)
-  createdAt           DateTime     @default(now())
-  product             Product      @relation(fields: [productId], references: [id])
-  quoteRequest        QuoteRequest @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
+  id                   String       @id @default(cuid())
+  quoteRequestId       String
+  productId            String
+  productNameSnapshot  String
+  productSlugSnapshot  String
+  baseCostSnapshot     Decimal?     @db.Decimal(12, 2)
+  costCurrencySnapshot String?
+  size                 String
+  color                String
+  quantity             Int          @default(1)
+  createdAt            DateTime     @default(now())
+  product              Product      @relation(fields: [productId], references: [id])
+  quoteRequest         QuoteRequest @relation(fields: [quoteRequestId], references: [id], onDelete: Cascade)
 
   @@index([quoteRequestId])
   @@index([productId])
@@ -114,6 +127,139 @@ model StoreConfig {
   updatedAt     DateTime @updatedAt
 }
 
+model InternalSaleQuote {
+  id                   String                  @id @default(cuid())
+  code                 String                  @unique
+  status               InternalSaleQuoteStatus @default(DRAFT)
+  customerName         String
+  customerPhone        String?
+  customerEmail        String?
+  customerCity         String?
+  notes                String?
+  currency             String                  @default("MXN")
+  subtotal             Decimal                 @default(0) @db.Decimal(14, 2)
+  discountTotal        Decimal                 @default(0) @db.Decimal(14, 2)
+  totalRevenue         Decimal                 @default(0) @db.Decimal(14, 2)
+  totalCost            Decimal                 @default(0) @db.Decimal(14, 2)
+  totalProfit          Decimal                 @default(0) @db.Decimal(14, 2)
+  marginPct            Decimal?                @db.Decimal(7, 4)
+  publicQuoteRequestId String?                 @unique
+  publicQuoteRequest   QuoteRequest?           @relation(fields: [publicQuoteRequestId], references: [id], onDelete: SetNull)
+  createdByUserId      String
+  createdBy            User                    @relation(fields: [createdByUserId], references: [id])
+  approvedAt           DateTime?
+  completedAt          DateTime?
+  items                InternalSaleQuoteItem[]
+  internalNotes        InternalSaleQuoteNote[]
+  completedSale        CompletedSale?
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+
+  @@index([status])
+  @@index([createdByUserId])
+  @@index([publicQuoteRequestId])
+}
+
+model InternalSaleQuoteNote {
+  id           String            @id @default(cuid())
+  quoteId      String
+  quote        InternalSaleQuote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  authorUserId String
+  author       User              @relation(fields: [authorUserId], references: [id])
+  message      String
+  createdAt    DateTime          @default(now())
+
+  @@index([quoteId])
+  @@index([authorUserId])
+}
+
+model InternalSaleQuoteItem {
+  id                  String            @id @default(cuid())
+  quoteId             String
+  quote               InternalSaleQuote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  productId           String?
+  product             Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variantId           String?
+  variant             ProductVariant?   @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  productNameSnapshot String
+  productSlugSnapshot String
+  sizeSnapshot        String?
+  colorSnapshot       String?
+  skuSnapshot         String?
+  quantity            Int
+  unitSalePrice       Decimal           @db.Decimal(12, 2)
+  unitCostSnapshot    Decimal           @db.Decimal(12, 2)
+  lineRevenue         Decimal           @db.Decimal(14, 2)
+  lineCost            Decimal           @db.Decimal(14, 2)
+  lineProfit          Decimal           @db.Decimal(14, 2)
+  discountType        DiscountType?
+  discountValue       Decimal?          @db.Decimal(12, 2)
+  sortOrder           Int               @default(0)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  @@index([quoteId])
+  @@index([productId])
+  @@index([variantId])
+}
+
+model CompletedSale {
+  id              String              @id @default(cuid())
+  saleNumber      String              @unique
+  quoteId         String?             @unique
+  quote           InternalSaleQuote?  @relation(fields: [quoteId], references: [id], onDelete: SetNull)
+  status          CompletedSaleStatus @default(COMPLETED)
+  customerName    String
+  customerPhone   String?
+  customerEmail   String?
+  customerCity    String?
+  currency        String              @default("MXN")
+  subtotal        Decimal             @db.Decimal(14, 2)
+  discountTotal   Decimal             @db.Decimal(14, 2)
+  totalRevenue    Decimal             @db.Decimal(14, 2)
+  totalCost       Decimal             @db.Decimal(14, 2)
+  totalProfit     Decimal             @db.Decimal(14, 2)
+  marginPct       Decimal?            @db.Decimal(7, 4)
+  notes           String?
+  createdByUserId String
+  createdBy       User                @relation(fields: [createdByUserId], references: [id])
+  completedAt     DateTime
+  items           CompletedSaleItem[]
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@index([status])
+  @@index([createdByUserId])
+}
+
+model CompletedSaleItem {
+  id                  String          @id @default(cuid())
+  saleId              String
+  sale                CompletedSale   @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  productId           String?
+  product             Product?        @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variantId           String?
+  variant             ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  productNameSnapshot String
+  productSlugSnapshot String
+  sizeSnapshot        String?
+  colorSnapshot       String?
+  skuSnapshot         String?
+  quantity            Int
+  unitSalePrice       Decimal         @db.Decimal(12, 2)
+  unitCostSnapshot    Decimal         @db.Decimal(12, 2)
+  lineRevenue         Decimal         @db.Decimal(14, 2)
+  lineCost            Decimal         @db.Decimal(14, 2)
+  lineProfit          Decimal         @db.Decimal(14, 2)
+  discountType        DiscountType?
+  discountValue       Decimal?        @db.Decimal(12, 2)
+  createdAt           DateTime        @default(now())
+
+  @@index([saleId])
+  @@index([productId])
+  @@index([variantId])
+}
+
 enum UserRole {
   ADMIN
   USER
@@ -123,6 +269,7 @@ enum QuoteRequestStatus {
   NEW
   CONTACTED
   QUOTED
+  CONVERTED
   CLOSED
   REJECTED
 }
@@ -130,4 +277,24 @@ enum QuoteRequestStatus {
 enum QuoteRequestSource {
   WEB_FORM
   WHATSAPP
+}
+
+enum InternalSaleQuoteStatus {
+  DRAFT
+  SENT
+  APPROVED
+  REJECTED
+  EXPIRED
+  COMPLETED
+}
+
+enum CompletedSaleStatus {
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum DiscountType {
+  FIXED
+  PERCENTAGE
 }

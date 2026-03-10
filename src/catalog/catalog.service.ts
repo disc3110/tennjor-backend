@@ -5,7 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Category, Product } from '@prisma/client';
+import { Category } from '@prisma/client';
 import { CreateAdminProductDto } from './dto/create-admin-product.dto';
 import { UpdateAdminProductDto } from './dto/update-admin-product.dto';
 import { CreateAdminProductVariantDto } from './dto/create-admin-product-variant.dto';
@@ -269,7 +269,7 @@ export class CatalogService {
       );
   }
 
-  async getProducts(params?: { categorySlug?: string }): Promise<Product[]> {
+  async getProducts(params?: { categorySlug?: string }) {
     const { categorySlug } = params || {};
 
     return await this.prisma.product.findMany({
@@ -279,7 +279,15 @@ export class CatalogService {
           ? { slug: categorySlug, isActive: true }
           : undefined,
       },
-      include: {
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        isActive: true,
+        categoryId: true,
+        createdAt: true,
+        updatedAt: true,
         category: true,
         images: {
           orderBy: { order: 'asc' },
@@ -294,10 +302,18 @@ export class CatalogService {
     });
   }
 
-  async getProductBySlug(slug: string): Promise<Product> {
+  async getProductBySlug(slug: string) {
     const product = await this.prisma.product.findUnique({
       where: { slug },
-      include: {
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        isActive: true,
+        categoryId: true,
+        createdAt: true,
+        updatedAt: true,
         category: true,
         images: {
           orderBy: { order: 'asc' },
@@ -340,6 +356,8 @@ export class CatalogService {
         slug: createAdminProductDto.slug,
         description: createAdminProductDto.description,
         isActive: createAdminProductDto.isActive ?? true,
+        baseCost: createAdminProductDto.baseCost,
+        costCurrency: createAdminProductDto.costCurrency ?? 'MXN',
         categoryId: createAdminProductDto.categoryId,
         images: createAdminProductDto.images?.length
           ? {
@@ -368,6 +386,8 @@ export class CatalogService {
         slug: true,
         description: true,
         isActive: true,
+        baseCost: true,
+        costCurrency: true,
         createdAt: true,
         updatedAt: true,
         category: {
@@ -461,6 +481,12 @@ export class CatalogService {
         ...(updateAdminProductDto.isActive !== undefined
           ? { isActive: updateAdminProductDto.isActive }
           : {}),
+        ...(updateAdminProductDto.baseCost !== undefined
+          ? { baseCost: updateAdminProductDto.baseCost }
+          : {}),
+        ...(updateAdminProductDto.costCurrency !== undefined
+          ? { costCurrency: updateAdminProductDto.costCurrency }
+          : {}),
         ...(updateAdminProductDto.categoryId !== undefined
           ? { categoryId: updateAdminProductDto.categoryId }
           : {}),
@@ -471,6 +497,8 @@ export class CatalogService {
         slug: true,
         description: true,
         isActive: true,
+        baseCost: true,
+        costCurrency: true,
         createdAt: true,
         updatedAt: true,
         category: {
@@ -1000,6 +1028,8 @@ export class CatalogService {
           slug: true,
           description: true,
           isActive: true,
+          baseCost: true,
+          costCurrency: true,
           createdAt: true,
           updatedAt: true,
           category: {
@@ -1129,6 +1159,8 @@ export class CatalogService {
         slug: true,
         description: true,
         isActive: true,
+        baseCost: true,
+        costCurrency: true,
         createdAt: true,
         updatedAt: true,
         category: {

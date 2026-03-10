@@ -8,10 +8,14 @@ import { CreateQuoteRequestDto } from './dto/create-quote-request.dto';
 import { FindAdminQuoteRequestsDto } from './dto/find-admin-quote-requests.dto';
 import { UpdateQuoteRequestStatusDto } from './dto/update-quote-request-status.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { SalesQuotesService } from 'src/sales-quotes/sales-quotes.service';
 
 @Injectable()
 export class QuoteRequestsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly salesQuotesService: SalesQuotesService,
+  ) {}
 
   async create(createQuoteRequestDto: CreateQuoteRequestDto) {
     const productIds = [
@@ -26,6 +30,8 @@ export class QuoteRequestsService {
         id: true,
         name: true,
         slug: true,
+        baseCost: true,
+        costCurrency: true,
       },
     });
 
@@ -59,6 +65,8 @@ export class QuoteRequestsService {
               productId: item.productId,
               productNameSnapshot: product.name,
               productSlugSnapshot: product.slug,
+              baseCostSnapshot: product.baseCost,
+              costCurrencySnapshot: product.costCurrency,
               size: item.size,
               color: item.color,
               quantity: item.quantity ?? 1,
@@ -66,8 +74,32 @@ export class QuoteRequestsService {
           }),
         },
       },
-      include: {
-        items: true,
+      select: {
+        id: true,
+        customerName: true,
+        customerEmail: true,
+        customerPhone: true,
+        customerCity: true,
+        notes: true,
+        internalNotes: true,
+        status: true,
+        convertedAt: true,
+        source: true,
+        createdAt: true,
+        updatedAt: true,
+        items: {
+          select: {
+            id: true,
+            quoteRequestId: true,
+            productId: true,
+            productNameSnapshot: true,
+            productSlugSnapshot: true,
+            size: true,
+            color: true,
+            quantity: true,
+            createdAt: true,
+          },
+        },
       },
     });
 
@@ -127,15 +159,26 @@ export class QuoteRequestsService {
           notes: true,
           internalNotes: true,
           status: true,
+          convertedAt: true,
           source: true,
           createdAt: true,
           updatedAt: true,
+          internalSaleQuote: {
+            select: {
+              id: true,
+              code: true,
+              status: true,
+              createdAt: true,
+            },
+          },
           items: {
             select: {
               id: true,
               productId: true,
               productNameSnapshot: true,
               productSlugSnapshot: true,
+              baseCostSnapshot: true,
+              costCurrencySnapshot: true,
               size: true,
               color: true,
               quantity: true,
@@ -169,15 +212,26 @@ export class QuoteRequestsService {
         notes: true,
         internalNotes: true,
         status: true,
+        convertedAt: true,
         source: true,
         createdAt: true,
         updatedAt: true,
+        internalSaleQuote: {
+          select: {
+            id: true,
+            code: true,
+            status: true,
+            createdAt: true,
+          },
+        },
         items: {
           select: {
             id: true,
             productId: true,
             productNameSnapshot: true,
             productSlugSnapshot: true,
+            baseCostSnapshot: true,
+            costCurrencySnapshot: true,
             size: true,
             color: true,
             quantity: true,
@@ -236,15 +290,26 @@ export class QuoteRequestsService {
         notes: true,
         internalNotes: true,
         status: true,
+        convertedAt: true,
         source: true,
         createdAt: true,
         updatedAt: true,
+        internalSaleQuote: {
+          select: {
+            id: true,
+            code: true,
+            status: true,
+            createdAt: true,
+          },
+        },
         items: {
           select: {
             id: true,
             productId: true,
             productNameSnapshot: true,
             productSlugSnapshot: true,
+            baseCostSnapshot: true,
+            costCurrencySnapshot: true,
             size: true,
             color: true,
             quantity: true,
@@ -258,5 +323,12 @@ export class QuoteRequestsService {
       message: 'Quote request updated successfully.',
       data: updatedQuoteRequest,
     };
+  }
+
+  async convertToSalesQuote(quoteRequestId: string, userId: string) {
+    return this.salesQuotesService.convertQuoteRequestToSalesQuote(
+      quoteRequestId,
+      userId,
+    );
   }
 }
