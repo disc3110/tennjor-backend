@@ -1,0 +1,38 @@
+services:
+  db:
+    image: postgres:16
+    container_name: zapateria_db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: zapateria_db
+    ports:
+      - '5433:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: .
+      target: builder
+    container_name: shoe_store_api_dev
+    restart: always
+    working_dir: /usr/src/app
+    command: npm run start:dev
+    ports:
+      - '3000:3000'
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/zapateria_db?schema=public
+      NODE_ENV: development
+      CHOKIDAR_USEPOLLING: 'true'
+    depends_on:
+      - db
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
+
+volumes:
+  postgres_data:
