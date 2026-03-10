@@ -5,14 +5,6 @@ export class CreateAdminProductImageDto {
   url: string;
 
   @IsOptional()
-  @IsUrl()
-  secureUrl?: string;
-
-  @IsOptional()
-  @IsString()
-  publicId?: string;
-
-  @IsOptional()
   @IsString()
   alt?: string;
 
