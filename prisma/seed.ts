@@ -870,7 +870,9 @@ async function main() {
   });
 
   if (commercialProducts.length < 2) {
-    throw new Error('Seed requires at least 2 products to build sales fixtures.');
+    throw new Error(
+      'Seed requires at least 2 products to build sales fixtures.',
+    );
   }
 
   const [productA, productB] = commercialProducts;
@@ -914,18 +916,26 @@ async function main() {
   const draftItemAUnitCost = toMoney(
     Number(productA.baseCost ?? toMoney(draftItemAUnitSale * 0.6)),
   );
-  const draftItemALineRevenue = toMoney(draftItemAQuantity * draftItemAUnitSale);
+  const draftItemALineRevenue = toMoney(
+    draftItemAQuantity * draftItemAUnitSale,
+  );
   const draftItemALineCost = toMoney(draftItemAQuantity * draftItemAUnitCost);
-  const draftItemALineProfit = toMoney(draftItemALineRevenue - draftItemALineCost);
+  const draftItemALineProfit = toMoney(
+    draftItemALineRevenue - draftItemALineCost,
+  );
 
   const draftItemBQuantity = 8;
   const draftItemBUnitSale = 640;
   const draftItemBUnitCost = toMoney(
     Number(productB.baseCost ?? toMoney(draftItemBUnitSale * 0.6)),
   );
-  const draftItemBLineRevenue = toMoney(draftItemBQuantity * draftItemBUnitSale);
+  const draftItemBLineRevenue = toMoney(
+    draftItemBQuantity * draftItemBUnitSale,
+  );
   const draftItemBLineCost = toMoney(draftItemBQuantity * draftItemBUnitCost);
-  const draftItemBLineProfit = toMoney(draftItemBLineRevenue - draftItemBLineCost);
+  const draftItemBLineProfit = toMoney(
+    draftItemBLineRevenue - draftItemBLineCost,
+  );
 
   const draftSubtotal = toMoney(draftItemALineRevenue + draftItemBLineRevenue);
   const draftDiscountTotal = 500;
@@ -1006,7 +1016,9 @@ async function main() {
   const completedItemLineRevenue = toMoney(
     completedItemQuantity * completedItemUnitSale,
   );
-  const completedItemLineCost = toMoney(completedItemQuantity * completedItemUnitCost);
+  const completedItemLineCost = toMoney(
+    completedItemQuantity * completedItemUnitCost,
+  );
   const completedItemLineProfit = toMoney(
     completedItemLineRevenue - completedItemLineCost,
   );
@@ -1015,7 +1027,9 @@ async function main() {
     completedItemLineRevenue - completedDiscountTotal,
   );
   const completedTotalCost = completedItemLineCost;
-  const completedTotalProfit = toMoney(completedTotalRevenue - completedTotalCost);
+  const completedTotalProfit = toMoney(
+    completedTotalRevenue - completedTotalCost,
+  );
   const completedMarginPct =
     completedTotalRevenue > 0
       ? toPct((completedTotalProfit / completedTotalRevenue) * 100)

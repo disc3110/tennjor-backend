@@ -18,6 +18,7 @@ import { FindInternalSaleQuotesDto } from './dto/find-internal-sale-quotes.dto';
 import { UpdateInternalSaleQuoteDto } from './dto/update-internal-sale-quote.dto';
 import { CreateInternalSaleQuoteItemDto } from './dto/create-internal-sale-quote-item.dto';
 import { UpdateInternalSaleQuoteItemDto } from './dto/update-internal-sale-quote-item.dto';
+import { CreateInternalSaleQuoteNoteDto } from './dto/create-internal-sale-quote-note.dto';
 
 type AuthenticatedRequest = {
   user: {
@@ -79,6 +80,15 @@ export class SalesQuotesController {
   @Post(':id/recalculate')
   recalculate(@Param('id') id: string) {
     return this.salesQuotesService.recalculateQuoteTotals(id);
+  }
+
+  @Post(':id/internal-notes')
+  addInternalNote(
+    @Param('id') id: string,
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: CreateInternalSaleQuoteNoteDto,
+  ) {
+    return this.salesQuotesService.addInternalNote(id, req.user.id, dto);
   }
 
   @Post(':id/complete-sale')

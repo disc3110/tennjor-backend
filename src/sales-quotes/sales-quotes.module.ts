@@ -9,5 +9,6 @@ import { SalesController } from './sales.controller';
   imports: [PrismaModule],
   controllers: [SalesQuotesController, SalesController],
   providers: [SalesQuotesService, AdminRoleGuard],
+  exports: [SalesQuotesService],
 })
 export class SalesQuotesModule {}

@@ -53,6 +53,7 @@ export class AdminDashboardService {
       quotesThisWeek,
       contactedQuotes,
       quotedQuotes,
+      convertedQuotes,
       closedQuotes,
       rejectedQuotes,
       topRequestedProductsRaw,
@@ -74,6 +75,9 @@ export class AdminDashboardService {
       }),
       this.prisma.quoteRequest.count({
         where: { status: QuoteRequestStatus.QUOTED },
+      }),
+      this.prisma.quoteRequest.count({
+        where: { status: QuoteRequestStatus.CONVERTED },
       }),
       this.prisma.quoteRequest.count({
         where: { status: QuoteRequestStatus.CLOSED },
@@ -158,6 +162,7 @@ export class AdminDashboardService {
         NEW: newQuotes,
         CONTACTED: contactedQuotes,
         QUOTED: quotedQuotes,
+        CONVERTED: convertedQuotes,
         CLOSED: closedQuotes,
         REJECTED: rejectedQuotes,
       },

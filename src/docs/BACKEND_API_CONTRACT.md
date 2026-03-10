@@ -39,6 +39,7 @@ Implemented in this step:
 - New tables/models:
   - `InternalSaleQuote`
   - `InternalSaleQuoteItem`
+  - `InternalSaleQuoteNote`
   - `CompletedSale`
   - `CompletedSaleItem`
 - New enums:
@@ -51,6 +52,7 @@ Implemented in this step:
   - quote item add/update/delete
   - quote totals recalculate
   - quote completion into finalized sale
+  - quote-request to sales-quote conversion (`/admin/quote-requests/:id/convert-to-sales-quote`)
 - Working backend routes for completed sales read layer:
   - list completed sales
   - get completed sale detail
@@ -114,50 +116,54 @@ Common validation constraints used:
 
 ## Endpoint Summary Table
 
-| Method | Path                                  | Auth required | Admin only    | Description                                   |
-| ------ | ------------------------------------- | ------------- | ------------- | --------------------------------------------- |
-| GET    | `/`                                   | No            | No            | Health-like hello string                      |
-| GET    | `/users`                              | No            | No            | List users (safe fields)                      |
-| POST   | `/auth/login`                         | No            | No            | Authenticate and get JWT                      |
-| GET    | `/catalog/categories`                 | No            | No            | Public active categories (filtered)           |
-| GET    | `/catalog/products`                   | No            | No            | Public active products list                   |
-| GET    | `/catalog/products/:slug`             | No            | No            | Public product detail by slug                 |
-| POST   | `/quote-requests`                     | No            | No            | Create quote request                          |
-| GET    | `/admin/dashboard/stats`              | Yes           | No (JWT only) | Dashboard KPIs                                |
-| GET    | `/admin/dashboard/stats/export/csv`   | Yes           | Yes           | Download dashboard stats + quote requests CSV |
-| POST   | `/admin/sales-quotes`                 | Yes           | Yes           | Create internal sale quote draft              |
-| GET    | `/admin/sales-quotes`                 | Yes           | Yes           | List internal sale quotes                     |
-| GET    | `/admin/sales-quotes/:id`             | Yes           | Yes           | Get internal sale quote detail                |
-| PATCH  | `/admin/sales-quotes/:id`             | Yes           | Yes           | Update internal sale quote header (DRAFT)     |
-| POST   | `/admin/sales-quotes/:id/items`       | Yes           | Yes           | Add internal sale quote item                  |
-| PATCH  | `/admin/sales-quotes/:id/items/:itemId` | Yes         | Yes           | Update internal sale quote item               |
-| DELETE | `/admin/sales-quotes/:id/items/:itemId` | Yes        | Yes           | Delete internal sale quote item               |
-| POST   | `/admin/sales-quotes/:id/recalculate` | Yes           | Yes           | Recalculate internal sale quote totals        |
-| POST   | `/admin/sales-quotes/:id/complete-sale` | Yes         | Yes           | Complete quote into finalized sale snapshot   |
-| GET    | `/admin/sales`                        | Yes           | Yes           | List completed sales                          |
-| GET    | `/admin/sales/:id`                    | Yes           | Yes           | Get completed sale detail                     |
-| GET    | `/admin/products`                     | Yes           | No (JWT only) | Admin product list                            |
-| GET    | `/admin/products/export/csv`          | Yes           | Yes           | Download products CSV                         |
-| GET    | `/admin/products/:id`                 | Yes           | No (JWT only) | Admin product detail                          |
-| POST   | `/admin/products`                     | Yes           | No (JWT only) | Create product                                |
-| PATCH  | `/admin/products/:id`                 | Yes           | No (JWT only) | Update product                                |
-| DELETE | `/admin/products/:id`                 | Yes           | No (JWT only) | Delete product and related catalog data       |
-| POST   | `/admin/products/:productId/variants` | Yes           | No (JWT only) | Create product variant                        |
-| POST   | `/admin/products/:productId/variants/bulk` | Yes      | No (JWT only) | Bulk create product variants by size range    |
-| PATCH  | `/admin/variants/:id`                 | Yes           | No (JWT only) | Update product variant                        |
-| DELETE | `/admin/variants/:id`                 | Yes           | No (JWT only) | Delete product variant                        |
-| POST   | `/admin/products/:productId/images`   | Yes           | No (JWT only) | Create product image                          |
-| PATCH  | `/admin/product-images/:id`           | Yes           | No (JWT only) | Update product image                          |
-| DELETE | `/admin/product-images/:id`           | Yes           | No (JWT only) | Delete product image                          |
-| GET    | `/admin/categories`                   | Yes           | No (JWT only) | Admin category list                           |
-| GET    | `/admin/categories/export/csv`        | Yes           | Yes           | Download categories CSV                       |
-| GET    | `/admin/categories/:id`               | Yes           | No (JWT only) | Admin category detail                         |
-| POST   | `/admin/categories`                   | Yes           | No (JWT only) | Create category                               |
-| PATCH  | `/admin/categories/:id`               | Yes           | No (JWT only) | Update category                               |
-| DELETE | `/admin/categories/:id`               | Yes           | No (JWT only) | Delete category and nested catalog data       |
-| GET    | `/admin/quote-requests`               | Yes           | No (JWT only) | Admin quote requests list                     |
-| GET    | `/admin/quote-requests/:id`           | Yes           | No (JWT only) | Admin quote request detail                    |
-| PATCH  | `/admin/quote-requests/:id/status`    | Yes           | No (JWT only) | Update quote request status                   |
+| Method | Path                                               | Auth required | Admin only    | Description                                     |
+| ------ | -------------------------------------------------- | ------------- | ------------- | ----------------------------------------------- |
+| GET    | `/`                                                | No            | No            | Health-like hello string                        |
+| GET    | `/users`                                           | No            | No            | List users (safe fields)                        |
+| POST   | `/auth/login`                                      | No            | No            | Authenticate and get JWT                        |
+| GET    | `/catalog/categories`                              | No            | No            | Public active categories (filtered)             |
+| GET    | `/catalog/products`                                | No            | No            | Public active products list                     |
+| GET    | `/catalog/products/:slug`                          | No            | No            | Public product detail by slug                   |
+| POST   | `/quote-requests`                                  | No            | No            | Create quote request                            |
+| GET    | `/admin/dashboard/stats`                           | Yes           | No (JWT only) | Dashboard KPIs                                  |
+| GET    | `/admin/dashboard/stats/export/csv`                | Yes           | Yes           | Download dashboard stats + quote requests CSV   |
+| POST   | `/admin/sales-quotes`                              | Yes           | Yes           | Create internal sale quote draft                |
+| GET    | `/admin/sales-quotes`                              | Yes           | Yes           | List internal sale quotes                       |
+| GET    | `/admin/sales-quotes/:id`                          | Yes           | Yes           | Get internal sale quote detail                  |
+| PATCH  | `/admin/sales-quotes/:id`                          | Yes           | Yes           | Update internal sale quote header (DRAFT)       |
+| POST   | `/admin/sales-quotes/:id/items`                    | Yes           | Yes           | Add internal sale quote item                    |
+| PATCH  | `/admin/sales-quotes/:id/items/:itemId`            | Yes           | Yes           | Update internal sale quote item                 |
+| DELETE | `/admin/sales-quotes/:id/items/:itemId`            | Yes           | Yes           | Delete internal sale quote item                 |
+| POST   | `/admin/sales-quotes/:id/recalculate`              | Yes           | Yes           | Recalculate internal sale quote totals          |
+| POST   | `/admin/sales-quotes/:id/internal-notes`           | Yes           | Yes           | Add internal note to sales quote                |
+| POST   | `/admin/sales-quotes/:id/complete-sale`            | Yes           | Yes           | Complete quote into finalized sale snapshot     |
+| GET    | `/admin/sales`                                     | Yes           | Yes           | List completed sales                            |
+| GET    | `/admin/sales/stats`                               | Yes           | Yes           | Get completed sales aggregated stats            |
+| GET    | `/admin/sales/export/csv`                          | Yes           | Yes           | Export completed sales CSV                      |
+| GET    | `/admin/sales/:id`                                 | Yes           | Yes           | Get completed sale detail                       |
+| GET    | `/admin/products`                                  | Yes           | No (JWT only) | Admin product list                              |
+| GET    | `/admin/products/export/csv`                       | Yes           | Yes           | Download products CSV                           |
+| GET    | `/admin/products/:id`                              | Yes           | No (JWT only) | Admin product detail                            |
+| POST   | `/admin/products`                                  | Yes           | No (JWT only) | Create product                                  |
+| PATCH  | `/admin/products/:id`                              | Yes           | No (JWT only) | Update product                                  |
+| DELETE | `/admin/products/:id`                              | Yes           | No (JWT only) | Delete product and related catalog data         |
+| POST   | `/admin/products/:productId/variants`              | Yes           | No (JWT only) | Create product variant                          |
+| POST   | `/admin/products/:productId/variants/bulk`         | Yes           | No (JWT only) | Bulk create product variants by size range      |
+| PATCH  | `/admin/variants/:id`                              | Yes           | No (JWT only) | Update product variant                          |
+| DELETE | `/admin/variants/:id`                              | Yes           | No (JWT only) | Delete product variant                          |
+| POST   | `/admin/products/:productId/images`                | Yes           | No (JWT only) | Create product image                            |
+| PATCH  | `/admin/product-images/:id`                        | Yes           | No (JWT only) | Update product image                            |
+| DELETE | `/admin/product-images/:id`                        | Yes           | No (JWT only) | Delete product image                            |
+| GET    | `/admin/categories`                                | Yes           | No (JWT only) | Admin category list                             |
+| GET    | `/admin/categories/export/csv`                     | Yes           | Yes           | Download categories CSV                         |
+| GET    | `/admin/categories/:id`                            | Yes           | No (JWT only) | Admin category detail                           |
+| POST   | `/admin/categories`                                | Yes           | No (JWT only) | Create category                                 |
+| PATCH  | `/admin/categories/:id`                            | Yes           | No (JWT only) | Update category                                 |
+| DELETE | `/admin/categories/:id`                            | Yes           | No (JWT only) | Delete category and nested catalog data         |
+| GET    | `/admin/quote-requests`                            | Yes           | No (JWT only) | Admin quote requests list                       |
+| GET    | `/admin/quote-requests/:id`                        | Yes           | No (JWT only) | Admin quote request detail                      |
+| PATCH  | `/admin/quote-requests/:id/status`                 | Yes           | No (JWT only) | Update quote request status                     |
+| POST   | `/admin/quote-requests/:id/convert-to-sales-quote` | Yes           | Yes           | Convert quote request into internal sales quote |
 
 ## Detailed Endpoints
 
@@ -418,6 +424,11 @@ curl -X GET http://localhost:3000/catalog/products/tenis-alpha
 - Response body:
   - `{ message, data }`
   - `data` is created `QuoteRequest` including `items`
+- Internal snapshot behavior:
+  - each `QuoteRequestItem` stores internal snapshot fields at creation:
+    - `baseCostSnapshot` from `Product.baseCost`
+    - `costCurrencySnapshot` from `Product.costCurrency`
+  - these internal cost snapshots are not exposed in the public create response payload
 - Error cases:
   - `400` DTO validation failure
   - `400` invalid product IDs (`"One or more products are invalid."`)
@@ -602,6 +613,8 @@ quoteRequests,qr_1,Diego,diego@example.com,+1555123456,Vancouver,NEW,WEB_FORM,2,
 - Response body:
   - `{ data: QuoteDetail }` including:
   - quote items snapshots
+  - `internalNotes` ordered by `createdAt ASC`
+  - each note includes `id`, `message`, `createdAt`, and `author` summary (`id`, `name`, `email`, `role`)
   - optional `publicQuoteRequest` summary
   - `createdBy` summary
 - Error cases:
@@ -672,6 +685,54 @@ quoteRequests,qr_1,Diego,diego@example.com,+1555123456,Vancouver,NEW,WEB_FORM,2,
 - Response body:
   - `{ message: "Quote totals recalculated successfully.", data: QuoteTotals }`
 
+### POST `/admin/sales-quotes/:id/internal-notes`
+
+- Purpose: Create a timestamped internal collaboration note on a sales quote.
+- Auth requirements: JWT + ADMIN role required.
+- Params:
+  - `id` (internal sales quote id)
+- Request body:
+  - `message` (string, required, trimmed, must contain non-whitespace characters)
+- Behavior:
+  - validates quote exists
+  - sets note author from authenticated user (`authorUserId`)
+  - stores note in `InternalSaleQuoteNote`
+- Response body:
+  - `{ message: "Internal quote note added successfully.", data: Note }`
+  - `Note` includes:
+    - `id`, `message`, `createdAt`
+    - `author` summary (`id`, `name`, `email`, `role`)
+- Error cases:
+  - `400` invalid/empty message
+  - `404` quote not found
+- Example request:
+
+```bash
+curl -X POST http://localhost:3000/admin/sales-quotes/quote_1/internal-notes \
+  -H 'Authorization: Bearer <admin-token>' \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"Client requested 30-day payment terms."}'
+```
+
+- Example response:
+
+```json
+{
+  "message": "Internal quote note added successfully.",
+  "data": {
+    "id": "note_1",
+    "message": "Client requested 30-day payment terms.",
+    "createdAt": "2026-03-09T20:30:00.000Z",
+    "author": {
+      "id": "user_admin",
+      "name": "Admin",
+      "email": "admin@tennjor.com",
+      "role": "ADMIN"
+    }
+  }
+}
+```
+
 ### POST `/admin/sales-quotes/:id/complete-sale`
 
 - Purpose: Convert an internal quote into a finalized `CompletedSale` snapshot.
@@ -684,6 +745,7 @@ quoteRequests,qr_1,Diego,diego@example.com,+1555123456,Vancouver,NEW,WEB_FORM,2,
   - creates `CompletedSale`
   - copies `InternalSaleQuoteItem` snapshots into `CompletedSaleItem`
   - updates quote status to `COMPLETED` and sets `quote.completedAt`
+  - if quote is linked to a public quote request, updates that quote request status to `CLOSED`
   - commits as a single DB transaction
 - Validation rules:
   - quote must exist
@@ -799,6 +861,113 @@ curl -X GET 'http://localhost:3000/admin/sales?page=1&limit=10&status=COMPLETED&
     "totalPages": 1
   }
 }
+```
+
+### GET `/admin/sales/stats`
+
+- Purpose: Aggregated completed-sales metrics for month/year/custom periods.
+- Auth requirements: JWT + ADMIN role required.
+- Query:
+  - `period?` (`month|year|custom`, default `month`)
+  - `year?` (4-digit year; used by `month`/`year`)
+  - `month?` (`1..12`; optional for `period=month`, defaults to current month when omitted)
+  - `dateFrom?` (ISO date string; required when `period=custom`)
+  - `dateTo?` (ISO date string; required when `period=custom`)
+  - `status?` (`COMPLETED|CANCELLED|REFUNDED`, optional filter)
+- Behavior:
+  - computes stats from `CompletedSale` and `CompletedSaleItem` only
+  - date filtering uses `completedAt`
+  - `period=custom` validates `dateFrom <= dateTo`
+- Response body:
+  - `{ data: { period, dateFrom, dateTo, salesCount, totalRevenue, totalCost, totalProfit, averageMarginPct, averageTicket, salesByStatus, topSellingProducts, topProfitableProducts } }`
+  - `salesByStatus`: count map by completed sale status
+  - `topSellingProducts`: top 5 by total quantity sold in the range
+  - `topProfitableProducts`: top 5 by line profit in the range
+- Error cases:
+  - `400` invalid period/date params or invalid custom range
+  - `401` missing/invalid token
+  - `403` authenticated but non-admin user
+- Example request:
+
+```bash
+curl -X GET 'http://localhost:3000/admin/sales/stats?period=month&year=2026&month=3' \
+  -H 'Authorization: Bearer <admin-token>'
+```
+
+- Example response:
+
+```json
+{
+  "data": {
+    "period": "month",
+    "dateFrom": "2026-03-01T00:00:00.000Z",
+    "dateTo": "2026-03-31T23:59:59.999Z",
+    "salesCount": 14,
+    "totalRevenue": 125400,
+    "totalCost": 88700,
+    "totalProfit": 36700,
+    "averageMarginPct": 29.7842,
+    "averageTicket": 8957.142857142857,
+    "salesByStatus": {
+      "COMPLETED": 13,
+      "CANCELLED": 1,
+      "REFUNDED": 0
+    },
+    "topSellingProducts": [
+      {
+        "productId": "prod_1",
+        "productName": "Tenis Alpha",
+        "productSlug": "tenis-alpha",
+        "totalQuantity": 120,
+        "totalRevenue": 84000,
+        "totalProfit": 22800
+      }
+    ],
+    "topProfitableProducts": [
+      {
+        "productId": "prod_1",
+        "productName": "Tenis Alpha",
+        "productSlug": "tenis-alpha",
+        "totalQuantity": 120,
+        "totalRevenue": 84000,
+        "totalProfit": 22800
+      }
+    ]
+  }
+}
+```
+
+### GET `/admin/sales/export/csv`
+
+- Purpose: Export completed sales rows to CSV for admin reporting.
+- Auth requirements: JWT + ADMIN role required.
+- Query:
+  - same filters/sorting as `GET /admin/sales`
+  - `status?`, `customerName?`, `saleNumber?`, `dateFrom?`, `dateTo?`
+  - `sortBy?` (`completedAt|createdAt|totalRevenue|totalProfit`)
+  - `sortOrder?` (`asc|desc`)
+- Response body:
+  - Raw CSV (`text/csv`) with columns:
+  - `saleNumber,status,customerName,customerPhone,customerEmail,currency,subtotal,discountTotal,totalRevenue,totalCost,totalProfit,marginPct,completedAt,createdAt`
+- Headers:
+  - `Content-Type: text/csv; charset=utf-8`
+  - `Content-Disposition: attachment; filename="sales.csv"`
+- Error cases:
+  - `400` invalid query/date range
+  - `401` missing/invalid token
+  - `403` authenticated but non-admin user
+- Example request:
+
+```bash
+curl -X GET 'http://localhost:3000/admin/sales/export/csv?status=COMPLETED&dateFrom=2026-03-01&dateTo=2026-03-31' \
+  -H 'Authorization: Bearer <admin-token>'
+```
+
+- Example response (excerpt):
+
+```csv
+saleNumber,status,customerName,customerPhone,customerEmail,currency,subtotal,discountTotal,totalRevenue,totalCost,totalProfit,marginPct,completedAt,createdAt
+S-2026-000001,COMPLETED,Zapaterias del Norte,+525512345678,compras@zapnorte.mx,MXN,14500.00,500.00,14000.00,9100.00,4900.00,35.0000,2026-03-09T10:00:00.000Z,2026-03-09T10:00:00.000Z
 ```
 
 ### GET `/admin/sales/:id`
@@ -1773,13 +1942,16 @@ curl -X DELETE http://localhost:3000/admin/categories/cat_1 \
 - Auth requirements: JWT required.
 - Params: None.
 - Query:
-  - `status?: NEW|CONTACTED|QUOTED|CLOSED|REJECTED`
+  - `status?: NEW|CONTACTED|QUOTED|CONVERTED|CLOSED|REJECTED`
   - `search?: string` (name/email/phone contains, insensitive)
   - `page?: number >=1` (default `1`)
   - `limit?: number >=1` (default `10`)
 - Request body: None.
 - Response body:
   - `{ data: QuoteRequestAdmin[], meta: { total, page, limit, totalPages } }`
+  - each item includes internal snapshot fields:
+    - `baseCostSnapshot`
+    - `costCurrencySnapshot`
 - Error cases:
   - `401` auth
   - `400` validation
@@ -1804,15 +1976,19 @@ curl -X GET 'http://localhost:3000/admin/quote-requests?status=NEW&page=1&limit=
       "notes": "Need delivery estimate",
       "internalNotes": [],
       "status": "NEW",
+      "convertedAt": null,
       "source": "WEB_FORM",
       "createdAt": "...",
       "updatedAt": "...",
+      "internalSaleQuote": null,
       "items": [
         {
           "id": "qri_1",
           "productId": "prod_1",
           "productNameSnapshot": "Tênis Alpha",
           "productSlugSnapshot": "tenis-alpha",
+          "baseCostSnapshot": "350.00",
+          "costCurrencySnapshot": "MXN",
           "size": "42",
           "color": "Preto",
           "quantity": 2
@@ -1833,6 +2009,9 @@ curl -X GET 'http://localhost:3000/admin/quote-requests?status=NEW&page=1&limit=
 - Request body: None.
 - Response body:
   - `{ data: QuoteRequestAdminDetail }` (includes item `createdAt`)
+  - each item includes internal snapshot fields:
+    - `baseCostSnapshot`
+    - `costCurrencySnapshot`
 - Error cases:
   - `401` auth
   - `404` quote request not found
@@ -1856,15 +2035,19 @@ curl -X GET http://localhost:3000/admin/quote-requests/qr_1 \
     "notes": "Need delivery estimate",
     "internalNotes": [],
     "status": "NEW",
+    "convertedAt": null,
     "source": "WEB_FORM",
     "createdAt": "...",
     "updatedAt": "...",
+    "internalSaleQuote": null,
     "items": [
       {
         "id": "qri_1",
         "productId": "prod_1",
         "productNameSnapshot": "Tênis Alpha",
         "productSlugSnapshot": "tenis-alpha",
+        "baseCostSnapshot": "350.00",
+        "costCurrencySnapshot": "MXN",
         "size": "42",
         "color": "Preto",
         "quantity": 2,
@@ -1882,7 +2065,7 @@ curl -X GET http://localhost:3000/admin/quote-requests/qr_1 \
 - Params: `id`.
 - Query: None.
 - Request body:
-  - `status` required enum: `NEW|CONTACTED|QUOTED|CLOSED|REJECTED`
+  - `status` required enum: `NEW|CONTACTED|QUOTED|CONVERTED|CLOSED|REJECTED`
   - `internalNotes?: string` (optional, appended to existing array)
 - Response body:
   - `{ message: "Quote request updated successfully.", data: ... }`
@@ -1917,6 +2100,79 @@ curl -X PATCH http://localhost:3000/admin/quote-requests/qr_1/status \
     "createdAt": "...",
     "updatedAt": "...",
     "items": []
+  }
+}
+```
+
+### POST `/admin/quote-requests/:id/convert-to-sales-quote`
+
+- Purpose: Backend-native conversion from `QuoteRequest` to `InternalSaleQuote`.
+- Auth requirements: JWT + ADMIN role required.
+- Params:
+  - `id` (quote request id)
+- Request body: none.
+- Conversion behavior:
+  - loads quote request with items
+  - enforces one-to-one rule:
+    - one quote request can generate only one internal sales quote
+    - if already converted, returns `400`
+  - creates internal sales quote in `DRAFT`
+  - links quote to request using `publicQuoteRequestId`
+  - copies customer fields:
+    - `customerName`, `customerPhone`, `customerEmail`, `customerCity`, `notes`
+  - copies item snapshots:
+    - `productNameSnapshot`, `productSlugSnapshot`, `sizeSnapshot`, `colorSnapshot`
+  - conversion item initialization:
+    - `quantity` from quote request
+    - `variantId` only when an exact single `(productId,size,color)` variant match exists; otherwise `null`
+    - `unitSalePrice = 0`
+    - `unitCostSnapshot = Product.baseCost` or `0` when missing
+    - line totals are computed and quote totals are recalculated server-side
+  - updates quote request state:
+    - `status = CONVERTED`
+    - `convertedAt = now()`
+- Response body:
+  - `{ message, data }`
+  - `data.quoteRequest`:
+    - `id`, `status`, `convertedAt`
+  - `data.salesQuote`:
+    - `id`, `code`, `status`, totals
+  - `data.copiedItemsCount`
+- Error cases:
+  - `400` quote request already converted
+  - `400` quote request has no items
+  - `400` one or more referenced products no longer exist
+  - `404` quote request not found
+- Example request:
+
+```bash
+curl -X POST http://localhost:3000/admin/quote-requests/qr_1/convert-to-sales-quote \
+  -H 'Authorization: Bearer <admin-token>'
+```
+
+- Example response:
+
+```json
+{
+  "message": "Quote request converted to internal sales quote successfully.",
+  "data": {
+    "quoteRequest": {
+      "id": "qr_1",
+      "status": "CONVERTED",
+      "convertedAt": "2026-03-09T18:10:00.000Z"
+    },
+    "salesQuote": {
+      "id": "sq_1",
+      "code": "SQ-2026-000010",
+      "status": "DRAFT",
+      "subtotal": "0.00",
+      "discountTotal": "0.00",
+      "totalRevenue": "0.00",
+      "totalCost": "5300.00",
+      "totalProfit": "-5300.00",
+      "marginPct": null
+    },
+    "copiedItemsCount": 2
   }
 }
 ```
@@ -1960,15 +2216,33 @@ curl -X PATCH http://localhost:3000/admin/quote-requests/qr_1/status \
 
 - Created from public endpoint with `source` forced to `WEB_FORM`.
 - `status` default is `NEW`.
+- Conversion workflow:
+  - backend endpoint converts a quote request into one internal sales quote (`1:1` via `InternalSaleQuote.publicQuoteRequestId @unique`)
+  - on conversion, quote request is marked `CONVERTED` and `convertedAt` is stored
+  - when linked internal sales quote is completed, quote request is auto-updated to `CLOSED`
 - `internalNotes` is an array in DB (`String[]`) and is admin-managed.
 - Admin status update endpoint appends one note string at a time when provided.
 - Quote requests are also included in dashboard CSV export (`/admin/dashboard/stats/export/csv`) under `quoteRequests` section.
+- Admin list/detail endpoints can include linked internal sales quote summary (`internalSaleQuote`) and conversion timestamp (`convertedAt`).
 
 ### Quote Request Items
 
 - Each item snapshots product name/slug at creation (`productNameSnapshot`, `productSlugSnapshot`).
 - Item keeps reference to `productId` but UI should rely on snapshot fields for historical consistency.
 - Quantity defaults to `1` when omitted.
+- Item also snapshots internal cost context at request time:
+  - `baseCostSnapshot`
+  - `costCurrencySnapshot`
+  - these are intended for admin/internal analysis, not public storefront display.
+
+### Internal Sales Notes
+
+- `InternalSaleQuote` supports structured internal notes via dedicated model `InternalSaleQuoteNote` (not `String[]`).
+- Each note stores:
+  - `message`
+  - `createdAt`
+  - author traceability (`authorUserId` -> `User`)
+- Notes are returned in sales quote detail endpoint ordered by `createdAt ASC`.
 
 ## Frontend Integration Recommendations
 
@@ -1999,6 +2273,7 @@ Suggested service function names:
 - `getAdminQuoteRequests(query)`
 - `getAdminQuoteRequest(id)`
 - `updateAdminQuoteRequestStatus(id, payload)`
+- `convertQuoteRequestToSalesQuote(id)`
 - `createInternalSaleQuote(payload)`
 - `getInternalSaleQuotes(query)`
 - `getInternalSaleQuote(id)`
@@ -2007,8 +2282,11 @@ Suggested service function names:
 - `updateInternalSaleQuoteItem(id, itemId, payload)`
 - `deleteInternalSaleQuoteItem(id, itemId)`
 - `recalculateInternalSaleQuote(id)`
+- `addInternalSaleQuoteNote(id, payload)`
 - `completeInternalSaleQuote(id)`
 - `getAdminSales(query)`
+- `getAdminSalesStats(query)`
+- `exportAdminSalesCsv(query)`
 - `getAdminSale(id)`
 
 Important fields for UI rendering:
@@ -2029,7 +2307,9 @@ Important fields for UI rendering:
 Known pitfalls:
 
 - Most admin JSON endpoints are JWT-protected but not role-guarded; CSV export and internal sales quote endpoints enforce ADMIN role explicitly.
+- `POST /admin/quote-requests/:id/convert-to-sales-quote` is ADMIN-only and stateful (creates linked internal sales quote).
 - CSV export endpoints require `ADMIN` role and return plain text CSV, not JSON.
+- Completed sales stats currently expose JSON only; no dedicated `/admin/sales/stats/export/csv` endpoint yet.
 - DTO whitelist + forbid non-whitelisted means frontend must avoid extra properties in payloads.
 - Boolean query parsing depends on transform; send explicit `true`/`false` strings.
 - Public categories have hidden business rule (minimum 3 active products), which can make categories disappear unexpectedly.
@@ -2041,7 +2321,7 @@ Inferred best practices:
 - Model API responses with exact endpoint-specific types (`{ data, meta }` vs raw arrays/objects).
 - Use optimistic UI cautiously on admin mutation endpoints; uniqueness checks (slug/SKU) can reject late.
 - Treat enum values as strict unions:
-  - `QuoteRequestStatus`: `NEW | CONTACTED | QUOTED | CLOSED | REJECTED`
+  - `QuoteRequestStatus`: `NEW | CONTACTED | QUOTED | CONVERTED | CLOSED | REJECTED`
   - `QuoteRequestSource`: `WEB_FORM | WHATSAPP`
   - `UserRole`: `ADMIN | USER`
 - Prefer rendering quote item snapshot fields over live product fetch in admin quote history screens.

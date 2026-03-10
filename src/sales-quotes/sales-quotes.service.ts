@@ -8,18 +8,126 @@ import {
   DiscountType,
   InternalSaleQuoteStatus,
   Prisma,
+  QuoteRequestStatus,
 } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { buildCsv } from 'src/common/utils/csv.util';
 import { CreateInternalSaleQuoteDto } from './dto/create-internal-sale-quote.dto';
 import { FindInternalSaleQuotesDto } from './dto/find-internal-sale-quotes.dto';
 import { UpdateInternalSaleQuoteDto } from './dto/update-internal-sale-quote.dto';
 import { CreateInternalSaleQuoteItemDto } from './dto/create-internal-sale-quote-item.dto';
 import { UpdateInternalSaleQuoteItemDto } from './dto/update-internal-sale-quote-item.dto';
 import { FindCompletedSalesDto } from './dto/find-completed-sales.dto';
+import {
+  GetCompletedSalesStatsDto,
+  SalesStatsPeriod,
+} from './dto/get-completed-sales-stats.dto';
+import { CreateInternalSaleQuoteNoteDto } from './dto/create-internal-sale-quote-note.dto';
 
 @Injectable()
 export class SalesQuotesService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private buildCompletedSalesDateRangeFromFilters(input: {
+    dateFrom?: string;
+    dateTo?: string;
+  }) {
+    if (input.dateFrom && input.dateTo) {
+      const from = new Date(input.dateFrom);
+      const to = new Date(input.dateTo);
+      if (from > to) {
+        throw new BadRequestException(
+          'dateFrom cannot be greater than dateTo.',
+        );
+      }
+    }
+
+    if (!input.dateFrom && !input.dateTo) {
+      return null;
+    }
+
+    return {
+      ...(input.dateFrom ? { gte: new Date(input.dateFrom) } : {}),
+      ...(input.dateTo ? { lte: new Date(input.dateTo) } : {}),
+    };
+  }
+
+  private buildCompletedSalesWhere(input: {
+    status?: CompletedSaleStatus;
+    customerName?: string;
+    saleNumber?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }): Prisma.CompletedSaleWhereInput {
+    const completedAtRange = this.buildCompletedSalesDateRangeFromFilters({
+      dateFrom: input.dateFrom,
+      dateTo: input.dateTo,
+    });
+
+    return {
+      ...(input.status ? { status: input.status } : {}),
+      ...(input.customerName
+        ? {
+            customerName: {
+              contains: input.customerName,
+              mode: 'insensitive',
+            },
+          }
+        : {}),
+      ...(input.saleNumber
+        ? {
+            saleNumber: {
+              contains: input.saleNumber,
+              mode: 'insensitive',
+            },
+          }
+        : {}),
+      ...(completedAtRange ? { completedAt: completedAtRange } : {}),
+    };
+  }
+
+  private resolveStatsDateRange(query: GetCompletedSalesStatsDto) {
+    const now = new Date();
+    const period = query.period ?? SalesStatsPeriod.MONTH;
+
+    if (period === SalesStatsPeriod.CUSTOM) {
+      if (!query.dateFrom || !query.dateTo) {
+        throw new BadRequestException(
+          'dateFrom and dateTo are required when period=custom.',
+        );
+      }
+      const from = new Date(query.dateFrom);
+      const to = new Date(query.dateTo);
+      if (from > to) {
+        throw new BadRequestException(
+          'dateFrom cannot be greater than dateTo.',
+        );
+      }
+
+      return {
+        period,
+        dateFrom: from,
+        dateTo: to,
+      };
+    }
+
+    if (period === SalesStatsPeriod.YEAR) {
+      const year = query.year ?? now.getFullYear();
+      return {
+        period,
+        dateFrom: new Date(Date.UTC(year, 0, 1, 0, 0, 0, 0)),
+        dateTo: new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999)),
+      };
+    }
+
+    const year = query.year ?? now.getFullYear();
+    const month = query.month ?? now.getMonth() + 1;
+    return {
+      period: SalesStatsPeriod.MONTH,
+      dateFrom: new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0)),
+      dateTo: new Date(Date.UTC(year, month, 0, 23, 59, 59, 999)),
+    };
+  }
 
   private assertEditableStatus(status: InternalSaleQuoteStatus) {
     if (status !== InternalSaleQuoteStatus.DRAFT) {
@@ -443,6 +551,22 @@ export class SalesQuotesService {
             role: true,
           },
         },
+        internalNotes: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            id: true,
+            message: true,
+            createdAt: true,
+            author: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                role: true,
+              },
+            },
+          },
+        },
         items: {
           orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
           select: {
@@ -476,6 +600,52 @@ export class SalesQuotesService {
 
     return {
       data: quote,
+    };
+  }
+
+  async addInternalNote(
+    quoteId: string,
+    userId: string,
+    dto: CreateInternalSaleQuoteNoteDto,
+  ) {
+    const message = dto.message.trim();
+    if (!message) {
+      throw new BadRequestException('message must not be empty.');
+    }
+
+    const quote = await this.prisma.internalSaleQuote.findUnique({
+      where: { id: quoteId },
+      select: { id: true },
+    });
+
+    if (!quote) {
+      throw new NotFoundException('Internal sale quote not found.');
+    }
+
+    const note = await this.prisma.internalSaleQuoteNote.create({
+      data: {
+        quoteId,
+        authorUserId: userId,
+        message,
+      },
+      select: {
+        id: true,
+        message: true,
+        createdAt: true,
+        author: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+          },
+        },
+      },
+    });
+
+    return {
+      message: 'Internal quote note added successfully.',
+      data: note,
     };
   }
 
@@ -748,6 +918,234 @@ export class SalesQuotesService {
     };
   }
 
+  async convertQuoteRequestToSalesQuote(
+    quoteRequestId: string,
+    userId: string,
+  ) {
+    let result: {
+      quoteRequest: {
+        id: string;
+        status: QuoteRequestStatus;
+        convertedAt: Date | null;
+      };
+      salesQuote: {
+        id: string;
+        code: string;
+        status: InternalSaleQuoteStatus;
+        subtotal: Prisma.Decimal;
+        discountTotal: Prisma.Decimal;
+        totalRevenue: Prisma.Decimal;
+        totalCost: Prisma.Decimal;
+        totalProfit: Prisma.Decimal;
+        marginPct: Prisma.Decimal | null;
+      } | null;
+      copiedItemsCount: number;
+    } | null = null;
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        result = await this.prisma.$transaction(async (tx) => {
+          const quoteRequest = await tx.quoteRequest.findUnique({
+            where: { id: quoteRequestId },
+            select: {
+              id: true,
+              customerName: true,
+              customerPhone: true,
+              customerEmail: true,
+              customerCity: true,
+              notes: true,
+              internalSaleQuote: {
+                select: {
+                  id: true,
+                  code: true,
+                },
+              },
+              items: {
+                orderBy: { createdAt: 'asc' },
+                select: {
+                  id: true,
+                  productId: true,
+                  productNameSnapshot: true,
+                  productSlugSnapshot: true,
+                  size: true,
+                  color: true,
+                  quantity: true,
+                },
+              },
+            },
+          });
+
+          if (!quoteRequest) {
+            throw new NotFoundException('Quote request not found.');
+          }
+
+          if (quoteRequest.internalSaleQuote) {
+            throw new BadRequestException(
+              `Quote request already converted to sales quote (${quoteRequest.internalSaleQuote.id}).`,
+            );
+          }
+
+          if (quoteRequest.items.length === 0) {
+            throw new BadRequestException(
+              'Cannot convert quote request without items.',
+            );
+          }
+
+          const productIds = [
+            ...new Set(quoteRequest.items.map((item) => item.productId)),
+          ];
+          const products = await tx.product.findMany({
+            where: { id: { in: productIds } },
+            select: {
+              id: true,
+              baseCost: true,
+              variants: {
+                select: {
+                  id: true,
+                  size: true,
+                  color: true,
+                  sku: true,
+                },
+              },
+            },
+          });
+
+          if (products.length !== productIds.length) {
+            const existingProductIds = new Set(
+              products.map((product) => product.id),
+            );
+            const missingProductIds = productIds.filter(
+              (productId) => !existingProductIds.has(productId),
+            );
+
+            throw new BadRequestException(
+              `Cannot convert quote request because one or more products no longer exist: ${missingProductIds.join(', ')}`,
+            );
+          }
+
+          const productsMap = new Map(
+            products.map((product) => [product.id, product]),
+          );
+          const code = await this.generateNextQuoteCode(tx);
+
+          const createdSalesQuote = await tx.internalSaleQuote.create({
+            data: {
+              code,
+              status: InternalSaleQuoteStatus.DRAFT,
+              customerName: quoteRequest.customerName,
+              customerPhone: quoteRequest.customerPhone,
+              customerEmail: quoteRequest.customerEmail,
+              customerCity: quoteRequest.customerCity,
+              notes: quoteRequest.notes,
+              currency: 'MXN',
+              subtotal: 0,
+              discountTotal: 0,
+              totalRevenue: 0,
+              totalCost: 0,
+              totalProfit: 0,
+              marginPct: null,
+              publicQuoteRequestId: quoteRequest.id,
+              createdByUserId: userId,
+            },
+            select: {
+              id: true,
+              code: true,
+              status: true,
+            },
+          });
+
+          await tx.internalSaleQuoteItem.createMany({
+            data: quoteRequest.items.map((item, index) => {
+              const product = productsMap.get(item.productId);
+
+              if (!product) {
+                throw new BadRequestException(
+                  `Cannot convert quote request item ${item.id}: product not found.`,
+                );
+              }
+
+              const matchingVariants = product.variants.filter(
+                (variant) =>
+                  variant.size === item.size && variant.color === item.color,
+              );
+              const matchedVariant =
+                matchingVariants.length === 1 ? matchingVariants[0] : null;
+
+              const unitCostSnapshot = this.toNumber(product.baseCost);
+              const financials = this.computeLineFinancials({
+                quantity: item.quantity,
+                unitSalePrice: 0,
+                unitCostSnapshot,
+              });
+
+              return {
+                quoteId: createdSalesQuote.id,
+                productId: item.productId,
+                variantId: matchedVariant?.id ?? null,
+                productNameSnapshot: item.productNameSnapshot,
+                productSlugSnapshot: item.productSlugSnapshot,
+                sizeSnapshot: item.size,
+                colorSnapshot: item.color,
+                skuSnapshot: matchedVariant?.sku ?? null,
+                quantity: item.quantity,
+                unitSalePrice: 0,
+                unitCostSnapshot,
+                lineRevenue: financials.lineRevenue,
+                lineCost: financials.lineCost,
+                lineProfit: financials.lineProfit,
+                sortOrder: index,
+              };
+            }),
+          });
+
+          const salesQuoteTotals = await this.recalculateQuoteTotalsWithTx(
+            tx,
+            createdSalesQuote.id,
+          );
+
+          const updatedQuoteRequest = await tx.quoteRequest.update({
+            where: { id: quoteRequest.id },
+            data: {
+              status: QuoteRequestStatus.CONVERTED,
+              convertedAt: new Date(),
+            },
+            select: {
+              id: true,
+              status: true,
+              convertedAt: true,
+            },
+          });
+
+          return {
+            quoteRequest: updatedQuoteRequest,
+            salesQuote: salesQuoteTotals,
+            copiedItemsCount: quoteRequest.items.length,
+          };
+        });
+
+        break;
+      } catch (error: unknown) {
+        const isQuoteCodeConflict = this.isUniqueConstraintOnField(
+          error,
+          'code',
+        );
+        const isQuoteRequestConflict = this.isUniqueConstraintOnField(
+          error,
+          'publicQuoteRequestId',
+        );
+        if ((isQuoteCodeConflict || isQuoteRequestConflict) && attempt < 3) {
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    return {
+      message: 'Quote request converted to internal sales quote successfully.',
+      data: result,
+    };
+  }
+
   async completeSale(quoteId: string) {
     let result: {
       sale: {
@@ -794,6 +1192,7 @@ export class SalesQuotesService {
               totalProfit: true,
               marginPct: true,
               createdByUserId: true,
+              publicQuoteRequestId: true,
               completedAt: true,
               completedSale: {
                 select: { id: true },
@@ -924,6 +1323,15 @@ export class SalesQuotesService {
             },
           });
 
+          if (quote.publicQuoteRequestId) {
+            await tx.quoteRequest.update({
+              where: { id: quote.publicQuoteRequestId },
+              data: {
+                status: QuoteRequestStatus.CLOSED,
+              },
+            });
+          }
+
           return {
             sale,
             quote: updatedQuote,
@@ -953,44 +1361,7 @@ export class SalesQuotesService {
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
     const skip = (page - 1) * limit;
-
-    if (query.dateFrom && query.dateTo) {
-      const from = new Date(query.dateFrom);
-      const to = new Date(query.dateTo);
-      if (from > to) {
-        throw new BadRequestException(
-          'dateFrom cannot be greater than dateTo.',
-        );
-      }
-    }
-
-    const where: Prisma.CompletedSaleWhereInput = {
-      ...(query.status ? { status: query.status } : {}),
-      ...(query.customerName
-        ? {
-            customerName: {
-              contains: query.customerName,
-              mode: 'insensitive',
-            },
-          }
-        : {}),
-      ...(query.saleNumber
-        ? {
-            saleNumber: {
-              contains: query.saleNumber,
-              mode: 'insensitive',
-            },
-          }
-        : {}),
-      ...(query.dateFrom || query.dateTo
-        ? {
-            completedAt: {
-              ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}),
-              ...(query.dateTo ? { lte: new Date(query.dateTo) } : {}),
-            },
-          }
-        : {}),
-    };
+    const where = this.buildCompletedSalesWhere(query);
 
     const sortBy = query.sortBy ?? 'completedAt';
     const sortOrder = query.sortOrder ?? 'desc';
@@ -1032,6 +1403,186 @@ export class SalesQuotesService {
         totalPages: Math.ceil(total / limit),
       },
     };
+  }
+
+  async getCompletedSalesStats(query: GetCompletedSalesStatsDto) {
+    const range = this.resolveStatsDateRange(query);
+
+    const where: Prisma.CompletedSaleWhereInput = {
+      status: query.status,
+      completedAt: {
+        gte: range.dateFrom,
+        lte: range.dateTo,
+      },
+    };
+
+    if (!query.status) {
+      delete where.status;
+    }
+
+    const [
+      salesCount,
+      totals,
+      completedCount,
+      cancelledCount,
+      refundedCount,
+      topProductsRaw,
+    ] = await this.prisma.$transaction([
+      this.prisma.completedSale.count({ where }),
+      this.prisma.completedSale.aggregate({
+        where,
+        _sum: {
+          totalRevenue: true,
+          totalCost: true,
+          totalProfit: true,
+        },
+        _avg: {
+          marginPct: true,
+        },
+      }),
+      this.prisma.completedSale.count({
+        where: {
+          ...where,
+          status: CompletedSaleStatus.COMPLETED,
+        },
+      }),
+      this.prisma.completedSale.count({
+        where: {
+          ...where,
+          status: CompletedSaleStatus.CANCELLED,
+        },
+      }),
+      this.prisma.completedSale.count({
+        where: {
+          ...where,
+          status: CompletedSaleStatus.REFUNDED,
+        },
+      }),
+      this.prisma.completedSaleItem.groupBy({
+        by: ['productId', 'productNameSnapshot', 'productSlugSnapshot'],
+        where: {
+          sale: where,
+        },
+        _sum: {
+          quantity: true,
+          lineRevenue: true,
+          lineProfit: true,
+        },
+        orderBy: {
+          _sum: {
+            quantity: 'desc',
+          },
+        },
+        take: 5,
+      }),
+    ]);
+
+    const totalRevenue = this.toNumber(totals._sum.totalRevenue);
+    const totalCost = this.toNumber(totals._sum.totalCost);
+    const totalProfit = this.toNumber(totals._sum.totalProfit);
+    const averageMarginPct =
+      totals._avg.marginPct === null ? null : Number(totals._avg.marginPct);
+    const averageTicket = salesCount > 0 ? totalRevenue / salesCount : 0;
+
+    const salesByStatus = {
+      COMPLETED: completedCount,
+      CANCELLED: cancelledCount,
+      REFUNDED: refundedCount,
+    };
+
+    const topSellingProducts = topProductsRaw.map((row) => ({
+      productId: row.productId,
+      productName: row.productNameSnapshot,
+      productSlug: row.productSlugSnapshot,
+      totalQuantity: row._sum?.quantity ?? 0,
+      totalRevenue: this.toNumber(row._sum?.lineRevenue),
+      totalProfit: this.toNumber(row._sum?.lineProfit),
+    }));
+
+    const topProfitableProducts = [...topSellingProducts]
+      .sort((a, b) => b.totalProfit - a.totalProfit)
+      .slice(0, 5);
+
+    return {
+      data: {
+        period: range.period,
+        dateFrom: range.dateFrom,
+        dateTo: range.dateTo,
+        salesCount,
+        totalRevenue,
+        totalCost,
+        totalProfit,
+        averageMarginPct,
+        averageTicket,
+        salesByStatus,
+        topSellingProducts,
+        topProfitableProducts,
+      },
+    };
+  }
+
+  async exportCompletedSalesCsv(query: FindCompletedSalesDto) {
+    const where = this.buildCompletedSalesWhere(query);
+    const sortBy = query.sortBy ?? 'completedAt';
+    const sortOrder = query.sortOrder ?? 'desc';
+
+    const sales = await this.prisma.completedSale.findMany({
+      where,
+      orderBy: {
+        [sortBy]: sortOrder,
+      },
+      select: {
+        saleNumber: true,
+        status: true,
+        customerName: true,
+        customerPhone: true,
+        customerEmail: true,
+        currency: true,
+        subtotal: true,
+        discountTotal: true,
+        totalRevenue: true,
+        totalCost: true,
+        totalProfit: true,
+        marginPct: true,
+        completedAt: true,
+        createdAt: true,
+      },
+    });
+
+    return buildCsv(
+      [
+        'saleNumber',
+        'status',
+        'customerName',
+        'customerPhone',
+        'customerEmail',
+        'currency',
+        'subtotal',
+        'discountTotal',
+        'totalRevenue',
+        'totalCost',
+        'totalProfit',
+        'marginPct',
+        'completedAt',
+        'createdAt',
+      ],
+      sales.map((sale) => [
+        sale.saleNumber,
+        sale.status,
+        sale.customerName,
+        sale.customerPhone ?? '',
+        sale.customerEmail ?? '',
+        sale.currency,
+        this.toNumber(sale.subtotal),
+        this.toNumber(sale.discountTotal),
+        this.toNumber(sale.totalRevenue),
+        this.toNumber(sale.totalCost),
+        this.toNumber(sale.totalProfit),
+        sale.marginPct === null ? '' : Number(sale.marginPct),
+        sale.completedAt,
+        sale.createdAt,
+      ]),
+    );
   }
 
   async findOneCompletedSale(id: string) {
